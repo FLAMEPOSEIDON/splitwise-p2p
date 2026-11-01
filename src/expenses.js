@@ -1,14 +1,15 @@
 /**
- * expenses.js — Core Splitwise-style business logic.
+ * expenses.js — Core Splitwise-style business logic with CSV Import/Export.
  *
  * Responsible for:
  *  - Creating/joining groups
  *  - Adding, editing, deleting expenses (all local writes, HLC-stamped)
- *  - Computing each member's balance
+ *  - Categorization (Groceries, Dining out, Rent, Cleaning, General, etc.)
+ *  - Date support
+ *  - Equal & custom/unequal share splits
+ *  - Computing each member's balance in INR (₹)
  *  - Simplifying debts into the minimum number of payments
- *
- * This file knows nothing about networking or sync — it only reads/writes
- * the local DB. sync.js is responsible for reconciling data between devices.
+ *  - Full Splitwise CSV Import and Export
  */
 
 const { randomUUID } = require('node:crypto');
@@ -41,19 +42,36 @@ function addMember(groupId, name, deviceId) {
     db.prepare(
       `INSERT INTO members (id, group_id, name, device_id, joined_at)
        VALUES (?, ?, ?, ?, ?)`
-    ).run(id, groupId, name, deviceId, now);
+    ).run(id, groupId, name, deviceId || `dev_${randomUUID().slice(0, 8)}`, now);
   } catch (err) {
-    // UNIQUE constraint (group_id, device_id) — member already exists, ignore
     if (!String(err.message).includes('UNIQUE')) throw err;
   }
 }
 
 /**
- * Create a local placeholder for a group you're JOINING (not creating).
- * The real name/created_at will arrive automatically once sync.js pulls
- * data from a peer who already has this group. Safe to call multiple
- * times — does nothing if the group already exists locally.
+ * Find or create a member by name in a group
  */
+function getOrCreateMember(groupId, name, deviceId) {
+  const existing = db.prepare(
+    `SELECT * FROM members WHERE group_id = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?))`
+  ).get(groupId, name);
+
+  if (existing) return existing;
+
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  const devId = deviceId || `dev_${randomUUID().slice(0, 8)}`;
+  try {
+    db.prepare(
+      `INSERT INTO members (id, group_id, name, device_id, joined_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(id, groupId, name.trim(), devId, now);
+    return { id, group_id: groupId, name: name.trim(), device_id: devId, joined_at: now };
+  } catch (_) {
+    return db.prepare(`SELECT * FROM members WHERE group_id = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?))`).get(groupId, name);
+  }
+}
+
 function joinGroupStub(groupId, deviceId, yourName) {
   const existing = getGroup(groupId);
   if (!existing) {
@@ -65,10 +83,6 @@ function joinGroupStub(groupId, deviceId, yourName) {
   addMember(groupId, yourName, deviceId);
 }
 
-/**
- * Update a group's real name/metadata once we learn it from a peer
- * (used when we joined via a stub and are now getting the real data).
- */
 function updateGroupInfo(groupId, name, createdBy, createdAt) {
   db.prepare(
     `UPDATE groups SET name = ?, created_by = ?, created_at = ? WHERE id = ?`
@@ -90,19 +104,29 @@ function listMembers(groupId) {
 }
 
 /**
- * Add an expense. `splitBetween` is an array of member IDs sharing the cost
- * equally. `paidBy` is the member ID who fronted the money.
- *
- * hlcClock is the HybridLogicalClock instance for this device (see hlc.js).
+ * Add an expense.
+ * `splitBetween` can be:
+ *   - Array of member IDs: ['id1', 'id2'] (Equal split)
+ *   - Array of objects: [{ memberId: 'id1', share: 2500 }, { memberId: 'id2', share: 1500 }] (Custom/Exact split)
  */
-function addExpense(hlcClock, { groupId, description, amount, paidBy, splitBetween, deviceId }) {
+function addExpense(hlcClock, {
+  groupId,
+  description,
+  amount,
+  paidBy,
+  splitBetween,
+  category = 'General',
+  date = null,
+  deviceId
+}) {
   const id = randomUUID();
   const hlc = hlcClock.tick();
+  const expenseDate = date || new Date().toISOString().split('T')[0];
 
   db.prepare(
     `INSERT INTO expenses
-      (id, group_id, description, amount, paid_by, split_between, created_by_device, hlc, deleted, updated_hlc)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
+      (id, group_id, description, amount, paid_by, split_between, category, date, created_by_device, hlc, deleted, updated_hlc)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
   ).run(
     id,
     groupId,
@@ -110,18 +134,16 @@ function addExpense(hlcClock, { groupId, description, amount, paidBy, splitBetwe
     amount,
     paidBy,
     JSON.stringify(splitBetween),
+    category,
+    expenseDate,
     deviceId,
     hlc,
     hlc
   );
 
-  return { id, groupId, description, amount, paidBy, splitBetween, hlc };
+  return { id, groupId, description, amount, paidBy, splitBetween, category, date: expenseDate, hlc };
 }
 
-/**
- * Soft-delete an expense (so the deletion itself can propagate during sync,
- * instead of just vanishing locally while other devices still have it).
- */
 function deleteExpense(hlcClock, expenseId) {
   const hlc = hlcClock.tick();
   db.prepare(`UPDATE expenses SET deleted = 1, updated_hlc = ? WHERE id = ?`).run(
@@ -132,17 +154,29 @@ function deleteExpense(hlcClock, expenseId) {
 
 function listExpenses(groupId, { includeDeleted = false } = {}) {
   const query = includeDeleted
-    ? `SELECT * FROM expenses WHERE group_id = ? ORDER BY hlc ASC`
-    : `SELECT * FROM expenses WHERE group_id = ? AND deleted = 0 ORDER BY hlc ASC`;
+    ? `SELECT * FROM expenses WHERE group_id = ? ORDER BY date DESC, hlc DESC`
+    : `SELECT * FROM expenses WHERE group_id = ? AND deleted = 0 ORDER BY date DESC, hlc DESC`;
 
   return db
     .prepare(query)
     .all(groupId)
-    .map((e) => ({ ...e, split_between: JSON.parse(e.split_between) }));
+    .map((exp) => {
+      let split = [];
+      try {
+        split = JSON.parse(exp.split_between);
+      } catch (_) {}
+      return {
+        ...exp,
+        category: exp.category || 'General',
+        date: exp.date || exp.hlc.slice(0, 10),
+        split_between: split,
+      };
+    });
 }
 
 /**
- * Compute net balance per member: positive = is owed money, negative = owes money.
+ * Compute balances in Indian Rupees (INR / ₹)
+ * Supports both equal splits and exact custom shares.
  */
 function computeBalances(groupId) {
   const members = listMembers(groupId);
@@ -152,31 +186,46 @@ function computeBalances(groupId) {
   for (const m of members) balances[m.id] = 0;
 
   for (const exp of expenses) {
-    const shareCount = exp.split_between.length;
-    if (shareCount === 0) continue;
-    const share = exp.amount / shareCount;
+    const split = exp.split_between || [];
+    if (split.length === 0) continue;
 
-    // Payer gets credited the full amount
+    // Credit payer
     balances[exp.paid_by] = (balances[exp.paid_by] || 0) + exp.amount;
 
-    // Everyone in the split (including payer, if included) owes their share
-    for (const memberId of exp.split_between) {
-      balances[memberId] = (balances[memberId] || 0) - share;
+    // Check if custom shares are used
+    let hasCustomShares = false;
+    for (const item of split) {
+      if (typeof item === 'object' && item !== null && typeof item.share === 'number') {
+        hasCustomShares = true;
+        break;
+      }
+    }
+
+    if (hasCustomShares) {
+      for (const item of split) {
+        const memId = typeof item === 'object' ? item.memberId : item;
+        const share = typeof item === 'object' ? item.share : (exp.amount / split.length);
+        balances[memId] = (balances[memId] || 0) - share;
+      }
+    } else {
+      // Equal split
+      const share = exp.amount / split.length;
+      for (const memberId of split) {
+        balances[memberId] = (balances[memberId] || 0) - share;
+      }
     }
   }
 
-  // Round to avoid floating point noise
+  // Round to 2 decimal places (paisa)
   for (const id of Object.keys(balances)) {
     balances[id] = Math.round(balances[id] * 100) / 100;
   }
 
-  return balances; // { memberId: netBalance }
+  return balances;
 }
 
 /**
- * Simplify debts into the minimum number of payments using a greedy
- * max-debtor-pays-max-creditor approach.
- * Returns an array of { from, to, amount } (from owes to).
+ * Greedy debt minimization algorithm (Splitwise Simplify Debts)
  */
 function simplifyDebts(groupId) {
   const balances = computeBalances(groupId);
@@ -217,12 +266,6 @@ function simplifyDebts(groupId) {
   return settlements;
 }
 
-/**
- * Record a settlement payment between two members.
- * In Splitwise's ledger model, a settlement is an expense where
- * `payerMemberId` pays the full amount, split solely with `receiverMemberId`.
- * This credits payer +amount and debits receiver -amount, reducing the debt to 0.
- */
 function settleDebt(hlcClock, { groupId, payerMemberId, receiverMemberId, amount, deviceId }) {
   const members = listMembers(groupId);
   const payer = members.find((m) => m.id === payerMemberId);
@@ -230,15 +273,268 @@ function settleDebt(hlcClock, { groupId, payerMemberId, receiverMemberId, amount
   const payerName = payer ? payer.name : 'Payer';
   const receiverName = receiver ? receiver.name : 'Receiver';
 
-  const description = `Payment: ${payerName} paid ${receiverName}`;
+  const description = `${payerName} paid ${receiverName}`;
   return addExpense(hlcClock, {
     groupId,
     description,
     amount,
     paidBy: payerMemberId,
     splitBetween: [receiverMemberId],
+    category: 'Payment',
+    date: new Date().toISOString().split('T')[0],
     deviceId,
   });
+}
+
+// -------------------------------------------------------------------
+// Splitwise CSV Parsing & Import / Export Logic
+// -------------------------------------------------------------------
+
+function parseCsvLine(text) {
+  const result = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') {
+      if (inQuotes && text[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (c === ',' && !inQuotes) {
+      result.push(cur.trim());
+      cur = '';
+    } else {
+      cur += c;
+    }
+  }
+  result.push(cur.trim());
+  return result;
+}
+
+/**
+ * Import a full Splitwise export CSV file into a group.
+ * Automatically adds members and creates all expenses with their dates and categories.
+ */
+function importSplitwiseCsv(hlcClock, csvContent, { groupId = null, groupName = 'Flat Expenses', deviceId }) {
+  const lines = csvContent.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length < 2) throw new Error('CSV file is empty or missing headers');
+
+  // Parse header
+  const header = parseCsvLine(lines[0]);
+  // Expected: Date, Description, Category, Cost, Currency, Member1, Member2, ...
+  if (header.length < 6) throw new Error('Invalid Splitwise CSV format (too few columns)');
+
+  const memberNames = header.slice(5);
+
+  // If no groupId provided, create a new group
+  let targetGroupId = groupId;
+  if (!targetGroupId) {
+    const newGroup = createGroup(groupName, deviceId, memberNames[0] || 'Me');
+    targetGroupId = newGroup.id;
+  }
+
+  // Ensure all member names exist in this group
+  const memberMap = {}; // name -> memberObject
+  for (const name of memberNames) {
+    const m = getOrCreateMember(targetGroupId, name, deviceId);
+    memberMap[name] = m;
+  }
+
+  let importedCount = 0;
+
+  for (let idx = 1; idx < lines.length; idx++) {
+    const line = lines[idx];
+    const row = parseCsvLine(line);
+    if (row.length < 6) continue;
+
+    const date = row[0];
+    const description = row[1];
+    const category = row[2] || 'General';
+    const costStr = row[3];
+    const cost = parseFloat(costStr);
+
+    // Skip summary / total row
+    if (description.toLowerCase().includes('total balance') || isNaN(cost) || cost <= 0) {
+      continue;
+    }
+
+    const memberValues = {};
+    for (let mIdx = 0; mIdx < memberNames.length; mIdx++) {
+      const mName = memberNames[mIdx];
+      const val = parseFloat(row[5 + mIdx]) || 0;
+      memberValues[mName] = val;
+    }
+
+    // 1. Payment row handling
+    if (category.toLowerCase() === 'payment' || description.toLowerCase().includes(' paid ')) {
+      // Find payer (positive value) and receiver (negative value)
+      let payerName = null;
+      let receiverName = null;
+      for (const [name, val] of Object.entries(memberValues)) {
+        if (val > 0) payerName = name;
+        if (val < 0) receiverName = name;
+      }
+
+      if (payerName && receiverName && memberMap[payerName] && memberMap[receiverName]) {
+        addExpense(hlcClock, {
+          groupId: targetGroupId,
+          description: description || `${payerName} paid ${receiverName}`,
+          amount: cost,
+          paidBy: memberMap[payerName].id,
+          splitBetween: [memberMap[receiverName].id],
+          category: 'Payment',
+          date,
+          deviceId,
+        });
+        importedCount++;
+        continue;
+      }
+    }
+
+    // 2. Normal Expense row handling
+    // In Splitwise: V_i = Paid_i - Share_i.
+    // For non-payers: Paid_i = 0 => Share_i = -V_i.
+    const positiveMembers = [];
+    const negativeMembers = [];
+
+    for (const [name, val] of Object.entries(memberValues)) {
+      if (val > 0.001) positiveMembers.push({ name, val });
+      else if (val < -0.001) negativeMembers.push({ name, share: -val });
+    }
+
+    // Single payer (standard case)
+    if (positiveMembers.length === 1) {
+      const payerName = positiveMembers[0].name;
+      const payer = memberMap[payerName];
+      if (!payer) continue;
+
+      // Check if all shares are equal
+      const splitShares = [];
+      let allEqual = true;
+      const totalNegShares = negativeMembers.reduce((sum, m) => sum + m.share, 0);
+      const payerShare = Math.max(0, Math.round((cost - totalNegShares) * 100) / 100);
+
+      const allMembersInvolved = [...negativeMembers];
+      if (payerShare > 0.001) {
+        allMembersInvolved.push({ name: payerName, share: payerShare });
+      }
+
+      const expectedEqual = Math.round((cost / allMembersInvolved.length) * 100) / 100;
+      for (const m of allMembersInvolved) {
+        if (Math.abs(m.share - expectedEqual) > 0.1) {
+          allEqual = false;
+        }
+      }
+
+      let splitBetween;
+      if (allEqual && allMembersInvolved.length > 0) {
+        splitBetween = allMembersInvolved.map((m) => memberMap[m.name].id);
+      } else {
+        splitBetween = allMembersInvolved.map((m) => ({
+          memberId: memberMap[m.name].id,
+          share: m.share,
+        }));
+      }
+
+      addExpense(hlcClock, {
+        groupId: targetGroupId,
+        description,
+        amount: cost,
+        paidBy: payer.id,
+        splitBetween,
+        category,
+        date,
+        deviceId,
+      });
+      importedCount++;
+    } else if (positiveMembers.length > 1) {
+      // Multiple payers: Split into sub-expenses per contributor
+      for (const pos of positiveMembers) {
+        const payer = memberMap[pos.name];
+        if (!payer) continue;
+
+        // Share owed by this payer
+        const totalCostShare = cost / memberNames.length;
+        const amountPaid = Math.round((pos.val + totalCostShare) * 100) / 100;
+
+        addExpense(hlcClock, {
+          groupId: targetGroupId,
+          description: `${description} (${pos.name})`,
+          amount: amountPaid,
+          paidBy: payer.id,
+          splitBetween: memberNames.map((n) => memberMap[n].id),
+          category,
+          date,
+          deviceId,
+        });
+        importedCount++;
+      }
+    }
+  }
+
+  return { groupId: targetGroupId, importedCount, members: Object.values(memberMap) };
+}
+
+/**
+ * Export group expenses to standard Splitwise CSV format
+ */
+function exportSplitwiseCsv(groupId) {
+  const group = getGroup(groupId);
+  if (!group) throw new Error('Group not found');
+
+  const members = listMembers(groupId);
+  const expenses = listExpenses(groupId);
+  const balances = computeBalances(groupId);
+
+  const header = ['Date', 'Description', 'Category', 'Cost', 'Currency', ...members.map((m) => m.name)];
+  const rows = [header.join(',')];
+
+  const memberMap = Object.fromEntries(members.map((m) => [m.id, m.name]));
+
+  for (const exp of expenses.slice().reverse()) {
+    const isPayment = exp.category === 'Payment' || exp.description.startsWith('Payment:');
+    const cols = [
+      exp.date || exp.hlc.slice(0, 10),
+      `"${exp.description.replace(/"/g, '""')}"`,
+      exp.category || 'General',
+      exp.amount.toFixed(2),
+      'INR',
+    ];
+
+    const split = exp.split_between || [];
+    const shareCount = split.length;
+
+    for (const m of members) {
+      let val = 0;
+      if (exp.paid_by === m.id) {
+        val += exp.amount;
+      }
+
+      // Check if m is in split
+      let memberShare = 0;
+      for (const item of split) {
+        if (typeof item === 'object' && item !== null && item.memberId === m.id) {
+          memberShare = item.share;
+        } else if (item === m.id) {
+          memberShare = exp.amount / shareCount;
+        }
+      }
+      val -= memberShare;
+
+      cols.push(val.toFixed(2));
+    }
+
+    rows.push(cols.join(','));
+  }
+
+  // Summary row at the bottom
+  const summaryCols = ['Total balance', ' ', ' ', 'INR', ...members.map((m) => (balances[m.id] || 0).toFixed(2))];
+  rows.push(summaryCols.join(','));
+
+  return rows.join('\n');
 }
 
 module.exports = {
@@ -246,6 +542,7 @@ module.exports = {
   joinGroupStub,
   updateGroupInfo,
   addMember,
+  getOrCreateMember,
   getGroup,
   listGroups,
   listMembers,
@@ -255,4 +552,6 @@ module.exports = {
   listExpenses,
   computeBalances,
   simplifyDebts,
+  importSplitwiseCsv,
+  exportSplitwiseCsv,
 };

@@ -1,83 +1,109 @@
-# Splitwise P2P — Offline-First Mesh Expense Sharing with Cloud Addon
+# Splitwise P2P — Offline-First Mesh Expense Sharing with Quick Share & QR
 
-An offline-first, peer-to-peer expense splitting application that runs with **zero internet connection** over local Wi-Fi or hotspots, with an optional **Free MongoDB Cloud Addon** for cross-network synchronization.
+An offline-first, peer-to-peer expense splitting application built for Indian users with **Indian Rupees (₹)**, **Google Nearby Connections (Quick Share mesh)**, **In-App QR Code Scanner & Generator**, official **Splitwise CSV Import/Export**, and **UPI 1-Tap Settlements** (`upi://pay`).
+
+Works with **zero internet connection** over local Wi-Fi, hotspot, or Bluetooth/Wi-Fi Direct mesh, with an optional **Free MongoDB Cloud Addon** for cross-network synchronization.
 
 Available as:
 1. 📱 **Standalone Native Android App (APK)**: Packaged `.apk` file that anyone can install directly on their Android phone with zero browsers or setup.
 2. 🌐 **Progressive Web App (PWA)**: Works across all platforms (Android, iOS Safari, Windows, Mac, Linux) with a trusted certificate authority for 1-tap installation.
-3. 🍃 **Optional Free MongoDB Atlas Cloud Addon**: Choose between **100% Local Only** or **Dual Mode (Local + MongoDB)**. Data is always stored locally, and optionally mirrored to your free MongoDB database when online!
+3. 🍃 **Optional Free MongoDB Atlas Cloud Addon**: Data is always stored locally, and optionally mirrored to your free MongoDB database when online.
 
 ---
 
-## Key Features
+## 🚀 Key Features
 
-- 📴 **100% Offline-First**: Add expenses, create groups, split bills, and calculate balances anytime—even in airplanes, subways, or remote campouts.
-- 📱 **Standalone Android App (APK)**: Native APK project with Android's `NsdManager` (mDNS), background socket sync, native SQLite database, and pre-configured release signing keystore.
-- 🍃 **Optional Free MongoDB Addon**: Run 100% locally or plug in your free MongoDB Atlas connection string. Data is saved locally AND mirrored to MongoDB, enabling remote sync across different Wi-Fi networks!
-- 📡 **Automatic Wi-Fi Mesh Sync**: Devices automatically discover each other over local Wi-Fi (using mDNS / Bonjour) and sync transactions without internet.
-- 🕒 **Conflict-Free Hybrid Logical Clocks (HLC)**: Deterministic last-write-wins ledger merging. No central server needed; every device has a synchronized copy of the database.
-- 🛡️ **Trusted Certificate Generator**: Built-in Certificate Authority generator (`splitwise-root-ca.crt`) providing green-lock HTTPS so mobile browsers allow instant 1-tap installation to the home screen.
-- 🧮 **Debt Simplification**: Greedy debt-minimization algorithm that computes the minimum number of payments to settle all debts in a group.
-- 🤝 **1-Click Settlement**: Record payments between members that instantly update balances across the mesh.
+- ⚡ **Google Nearby Connections (Quick Share Mesh)**: Devices discover and sync with each other automatically using Bluetooth Low Energy (BLE) and Wi-Fi Direct / Local Hotspots, even if home Wi-Fi has client isolation!
+- 📷 **In-App QR Code Scanner & Generator**:
+  - Tap **"📷 Scan QR"** in the top bar to scan another device's screen and join the group in one second with zero typing.
+  - Built-in zero-dependency client-side QR generator displays the group ID and connection endpoints instantly.
+- 🇮🇳 **Indian Rupees (₹) Everywhere**: Native Indian number formatting (`₹1,50,000.00`) across group cards, expense logs, balances, and settlements.
+- 📲 **1-Tap UPI Settlement**: When settling debts, tap **"Pay via UPI (GPay / PhonePe / Paytm)"** to launch your favourite UPI app pre-filled with the exact amount and payee!
+- 📥 **Official Splitwise CSV Import**:
+  - 1-Tap import specifically tailored for your Splitwise exports (e.g. `export.csv`).
+  - Automatically parses multiple payers, unequal split shares, categories (🥦 Groceries, 🍔 Dining out, 🏠 Rent, 🧹 Cleaning, etc.), and transaction dates.
+- 📤 **Splitwise CSV Export**: Export any group into an official Splitwise-compatible CSV file at any time.
+- 🔍 **Real-Time Search & Category Filters**: Filter expenses instantly by category chips (Groceries, Dining, Rent, Utilities, etc.) or search by description/payer.
+- ⚖️ **Flexible Split Modes**: Split bills equally among selected members or enter custom exact share amounts.
+- 🕒 **Conflict-Free Hybrid Logical Clocks (HLC)**: Deterministic last-write-wins ledger merging. No central server needed; every device maintains a synchronized local ledger.
+- 🧮 **Greedy Debt Simplification**: Automatically computes the minimum number of transactions needed to settle all debts in a group.
 
 ---
 
-## 1. Standalone Android App (Install Directly)
-
-If you want a **total, standalone app (`.apk`)** that friends can install directly by tapping on it:
+## 📱 1. Standalone Android App (APK)
 
 ### Option A: Automatic Cloud Build via GitHub Actions (Recommended)
-1. Push this repository to your GitHub account (free private or public repository).
-2. Go to the **Actions** tab on GitHub: the workflow `.github/workflows/build-apk.yml` runs automatically.
-3. In ~2 minutes, click on the latest workflow run and download the `Splitwise-P2P-Release-APK` artifact!
-4. Send the `.apk` file to your friends (via WhatsApp, Telegram, Google Drive, or Bluetooth).
-5. Anyone can tap the `.apk` on their Android phone to install directly!
+1. Push this repository to your GitHub account (public or private):
+   ```bash
+   git add .
+   git commit -m "Add Quick Share Nearby Connections, QR Scanner, CSV import, and INR currency"
+   git push origin main
+   ```
+2. Open your repository on GitHub and click on the **Actions** tab.
+3. The workflow `.github/workflows/build-apk.yml` runs automatically.
+4. Once completed (~2 minutes), click on the workflow run and download the **`Splitwise-P2P-Release-APK`** artifact.
+5. Extract the downloaded zip file to get `app-release.apk`.
+6. Send the `.apk` to your devices (via WhatsApp, Telegram, Quick Share, or Google Drive) and install directly!
 
 ### Option B: Build Locally in Termux / Linux
-If you have Gradle or JDK installed in Termux:
+If you have Gradle and JDK installed in Termux:
 ```bash
 pkg install openjdk-17 gradle
 chmod +x build-apk-termux.sh
 ./build-apk-termux.sh
 ```
-The signed release APK will be generated at:
+The signed release APK will be located at:
 `android-app/app/build/outputs/apk/release/app-release.apk`
 
 ---
 
-## 2. Optional Free MongoDB Cloud Addon (Dual Storage)
+## 🔄 2. How Offline Peer-to-Peer Sync Works
 
-In the app, you have two storage modes:
+The app implements a **multi-layer hybrid discovery and sync architecture**:
 
 ```
-[ Option 1: 100% Local Only ]          [ Option 2: Dual Mode (Local + MongoDB) ]
-- Operates purely offline              - Always saves to Local SQLite / IndexedDB
-- Syncs only over local Wi-Fi          - AND mirrors to free MongoDB Atlas
-- Zero cloud accounts needed           - Syncs with friends across different Wi-Fi!
+┌────────────────────────────────────────────────────────┐
+│                      Splitwise P2P                     │
+└────────────────────────────────────────────────────────┘
+          │                                  │
+    Layer 1: Nearby Mesh               Layer 2: Wi-Fi NSD
+ (Google Nearby Connections)           (mDNS / Bonjour)
+          │                                  │
+  • BLE Advertisement                • mDNS Service Broadcast
+  • BLE Discovery                    • Socket Server (:8888)
+  • Wi-Fi Direct / Hotspot           • Local Wi-Fi Router
+  • Works with AP Isolation!         • Fast High-Throughput
 ```
 
-### How to use MongoDB as an Addon:
-1. Go to the **MongoDB** tab in the app.
-2. Select **☁️ Local + MongoDB**.
-3. Paste your free MongoDB connection string:
-   `mongodb+srv://<username>:<password>@cluster0.mongodb.net/splitwise`
-4. Tap **Save & Connect**.
-5. Your data is now stored on **both your phone/device locally and in MongoDB**!
-6. If you go offline, you can continue using the app locally. When you reconnect to the internet, all offline changes sync to MongoDB automatically.
-
-### How to get a Free MongoDB Database (Takes 2 Minutes):
-1. Sign up for free at [mongodb.com/atlas](https://www.mongodb.com/cloud/atlas/register) (no credit card required).
-2. Create a Free **M0 Sandbox** cluster (512MB free forever).
-3. Under **Database Access**, create a username and password.
-4. Under **Network Access**, click **Add IP Address** and choose `0.0.0.0/0` (Allow from anywhere).
-5. Click **Connect → Drivers → Node.js**, copy the connection string, replace `<password>`, and paste it into the app!
+1. **Nearby Connections (Quick Share style)**: Uses BLE to discover nearby devices within range and automatically negotiates an offline Wi-Fi Direct or hotspot socket. This works even when your home Wi-Fi router blocks peer-to-peer traffic (AP / Client Isolation).
+2. **Wi-Fi NSD / mDNS**: Automatically discovers other phones running Splitwise P2P on the local subnet (`_splitwisep2p._tcp`).
+3. **1-Tap QR Join**: Display the QR code on Device A. Tap **"📷 Scan QR"** on Device B to instantly scan and connect, immediately triggering a full state sync!
 
 ---
 
-## 3. Quick Start (Terminal / Node.js Server Mode)
+## 📥 3. Splitwise CSV Import Guide
+
+You can import any group history exported from the official Splitwise app:
+
+### 1-Tap Import from Downloads:
+1. Make sure your `export.csv` file is located in your device's `Downloads` folder (or at `/data/data/com.termux/files/home/downloads/export.csv`).
+2. Open the app and tap **"📥 Import Splitwise CSV"**.
+3. Tap **"⚡ 1-Tap Import downloads/export.csv"**.
+4. All members, categories, historical dates, payments, and expenses are imported in milliseconds.
+
+### Custom CSV File Picker:
+1. Tap **"📥 Import Splitwise CSV"**.
+2. Select any `.csv` file exported from Splitwise.
+3. Tap **"Import File"**.
+
+---
+
+## 🌐 4. Progressive Web App (PWA) Mode
+
+If you wish to run the Node.js server and connect via mobile web browser:
 
 ```bash
-# 1. Start the local server
+# Start the local server
 node index.js
 ```
 
@@ -96,19 +122,14 @@ Upon launching, the terminal displays:
 ======================================================
 ```
 
----
-
-## 4. Install as a PWA (With Trusted Certificate)
-
-### 📱 Android (Phones & Tablets)
+### Install PWA on Android Chrome:
 1. Connect to the same Wi-Fi.
-2. Scan the terminal QR code or open `http://<HOST-IP>:8080/ca.crt` in Chrome to download `splitwise-root-ca.crt`.
-3. Open phone **Settings → Security & Privacy → More security settings → Install from device storage → CA certificate**.
-4. Choose **Install anyway** and select `splitwise-root-ca.crt`.
-5. Open `https://<HOST-IP>:8443` in Chrome: you will see the secure lock 🔒.
-6. Tap the **Install** banner or Chrome menu (3 dots) → **Install app / Add to Home screen**.
+2. Download `http://<HOST-IP>:8080/ca.crt`.
+3. Go to **Settings → Security → Install from storage → CA certificate** and select `splitwise-root-ca.crt`.
+4. Open `https://<HOST-IP>:8443` in Chrome: you will see the green lock 🔒.
+5. Tap **Add to Home screen** / **Install**.
 
-### 🍏 iPhone & iPad (iOS Safari)
+### Install PWA on iPhone (iOS Safari):
 1. Connect to the same Wi-Fi.
 2. Open Safari to `http://<HOST-IP>:8080/ca.crt` → tap **Allow**.
 3. Open **Settings → Profile Downloaded → Install**.
@@ -117,47 +138,53 @@ Upon launching, the terminal displays:
 
 ---
 
-## Project Structure
+## 🍃 5. Optional Free MongoDB Cloud Addon
+
+If you want your data to sync across mobile cellular data or different Wi-Fi networks when internet is available:
+1. In the app, switch to the **MongoDB** tab.
+2. Select **☁️ Local + MongoDB**.
+3. Enter your free MongoDB Atlas connection string:
+   `mongodb+srv://<username>:<password>@cluster0.mongodb.net/splitwise`
+4. Tap **Save & Connect**.
+5. All local transactions are mirrored to MongoDB, and remote changes sync to your phone seamlessly!
+
+---
+
+## 📁 Project Structure
 
 ```
 splitwise-p2p/
-├── android-app/                # Standalone Native Android Application
+├── android-app/                       # Standalone Native Android Application
 │   ├── app/src/main/
-│   │   ├── AndroidManifest.xml # Permissions (Internet, Wi-Fi Multicast)
+│   │   ├── AndroidManifest.xml        # Permissions (BLE, Wi-Fi, Camera, Internet)
 │   │   ├── java/com/splitwise/p2p/
-│   │   │   ├── MainActivity.java    # Fullscreen WebView + AndroidBridge
-│   │   │   ├── P2pSyncService.java  # Native mDNS (NsdManager) + Socket Sync
-│   │   │   ├── DatabaseHelper.java  # Native Android SQLite DB
-│   │   │   └── HlcClock.java        # Hybrid Logical Clock in Java
-│   │   └── assets/www/              # Bundled offline HTML/CSS/JS frontend
-│   ├── build.gradle                 # Gradle build with release keystore signing
-│   └── splitwise-release.keystore   # Release signing keystore
-├── .github/workflows/          # Automated cloud APK builder
-│   └── build-apk.yml           # GitHub Actions workflow (builds APK on push)
-├── build-apk-termux.sh         # Local Termux APK build script
-├── src/                        # Core backend modules
-│   ├── mongoSync.js            # Optional Free MongoDB Atlas Cloud Addon
-│   ├── cert.js                 # Automatic TLS Certificate & Local CA Manager
-│   ├── qrcode.js               # Zero-dependency QR Code generator (ANSI & SVG)
-│   ├── webServer.js            # HTTPS/HTTP server with WebSocket & REST API
-│   ├── discovery.js            # mDNS LAN peer discovery
-│   ├── sync.js                 # P2P WebSocket sync protocol
-│   ├── db.js                   # Local SQLite storage layer
-│   ├── expenses.js             # Splitwise business logic & debt simplification
-│   ├── hlc.js                  # Hybrid Logical Clock implementation
-│   └── cli.js                  # Terminal menu interface
-├── public/                     # PWA frontend assets
-│   ├── index.html              # Modern responsive mobile UI with MongoDB tab
-│   ├── styles.css              # Dark-mode fintech styling
-│   ├── app.js                  # Dual native/web frontend application
-│   ├── sw.js                   # Offline caching service worker
-│   ├── manifest.json           # PWA Web Manifest
-│   └── icons/                  # Vector app icons
-├── index.js                    # Application entry point
+│   │   │   ├── MainActivity.java      # AndroidBridge, WebView, Google Code Scanner
+│   │   │   ├── NearbySyncService.java # Google Nearby Connections (Quick Share mesh)
+│   │   │   ├── P2pSyncService.java    # Wi-Fi NSD (mDNS) + Socket Mesh
+│   │   │   ├── DatabaseHelper.java    # SQLite DB v2, CSV Import/Export, Balances
+│   │   │   └── HlcClock.java          # Hybrid Logical Clock in Java
+│   │   └── assets/www/                # Bundled offline HTML/CSS/JS frontend
+│   └── build.gradle                   # Gradle configuration & Google Play Services
+├── .github/workflows/
+│   └── build-apk.yml                  # Automated cloud APK builder (GitHub Actions)
+├── build-apk-termux.sh                # Local Termux APK build script
+├── src/                               # Node.js backend modules
+│   ├── expenses.js                    # Splitwise logic, CSV parser, debt simplification
+│   ├── webServer.js                   # REST API, WebSocket sync & CSV endpoints
+│   ├── mongoSync.js                   # Free MongoDB Atlas Cloud Addon
+│   ├── cert.js                        # Automatic TLS Certificate & Local CA Manager
+│   ├── discovery.js                   # mDNS LAN peer discovery
+│   └── sync.js                        # P2P WebSocket sync protocol
+├── public/                            # Web PWA frontend assets
+│   ├── index.html                     # Responsive UI with INR, QR, CSV & UPI buttons
+│   ├── styles.css                     # Modern dark-mode fintech theme
+│   ├── app.js                         # Dual native/web frontend application
+│   └── qrcode.js                      # Zero-dependency QR code generator
+├── index.js                           # Node.js application entry point
 └── package.json
 ```
 
 ---
 
-## License
+## 📜 License
 MIT

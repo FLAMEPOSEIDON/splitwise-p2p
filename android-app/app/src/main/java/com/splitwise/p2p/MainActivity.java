@@ -1,26 +1,48 @@
 package com.splitwise.p2p;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.net.wifi.WifiManager;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.util.Log;
 import android.webkit.JavascriptInterface;
+import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Toast;
+
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanner;
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions;
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning;
+import com.google.mlkit.vision.barcode.common.Barcode;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
-public class MainActivity extends Activity implements P2pSyncService.OnSyncListener {
+public class MainActivity extends Activity implements P2pSyncService.OnSyncListener, NearbySyncService.OnNearbySyncListener {
+    private static final String TAG = "MainActivity";
     private static final String PREFS_NAME = "SplitwiseP2P_Prefs";
     private static final String PREF_DEVICE_ID = "deviceId";
     private static final String PREF_DEVICE_NAME = "deviceName";
+    private static final int PERMISSION_REQ_CODE = 1001;
 
     private String deviceId;
     private String deviceName;
@@ -28,20 +50,22 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
     private HlcClock hlcClock;
     private DatabaseHelper dbHelper;
     private P2pSyncService syncService;
+    private NearbySyncService nearbySyncService;
 
     private WifiManager.MulticastLock multicastLock;
     private WebView webView;
+    private GmsBarcodeScanner barcodeScanner;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // 1. Acquire Wi-Fi Multicast Lock (essential on Android for mDNS / Bonjour)
+        // 1. Acquire Wi-Fi Multicast Lock
         WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
         if (wifi != null) {
             multicastLock = wifi.createMulticastLock("SplitwiseP2PMulticastLock");
             multicastLock.setReferenceCounted(true);
-            multicastLock.acquire();
+            try { multicastLock.acquire(); } catch (Exception ignored) {}
         }
 
         // 2. Identity
@@ -61,10 +85,23 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         // 3. Database & Sync
         hlcClock = new HlcClock(deviceId);
         dbHelper = new DatabaseHelper(this);
+
+        // Start Wi-Fi Mesh Sync (TCP Socket + NSD mDNS)
         syncService = new P2pSyncService(this, deviceId, deviceName, hlcClock, dbHelper, this);
         syncService.start();
 
-        // 4. Configure Fullscreen Web View
+        // Start Google Nearby Connections (Quick Share BLE + Wi-Fi Direct Mesh)
+        nearbySyncService = new NearbySyncService(this, deviceId, deviceName, hlcClock, dbHelper, this);
+        checkAndRequestPermissions();
+
+        // 4. Initialize Google Code Scanner for 1-Tap QR joining
+        GmsBarcodeScannerOptions options = new GmsBarcodeScannerOptions.Builder()
+                .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                .enableAutoZoom()
+                .build();
+        barcodeScanner = GmsBarcodeScanning.getClient(this, options);
+
+        // 5. Configure Fullscreen Web View
         webView = new WebView(this);
         setContentView(webView);
 
@@ -76,7 +113,16 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         settings.setAllowContentAccess(true);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 
-        webView.setWebChromeClient(new WebChromeClient());
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onPermissionRequest(final PermissionRequest request) {
+                runOnUiThread(() -> {
+                    try {
+                        request.grant(request.getResources());
+                    } catch (Exception ignored) {}
+                });
+            }
+        });
         webView.setWebViewClient(new WebViewClient());
 
         // Attach Android Native Bridge to JavaScript
@@ -86,6 +132,71 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         webView.loadUrl("file:///android_asset/www/index.html");
     }
 
+    private void checkAndRequestPermissions() {
+        List<String> perms = new ArrayList<>();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // Android 12+ (API 31+)
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+                perms.add(Manifest.permission.BLUETOOTH_SCAN);
+            }
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) != PackageManager.PERMISSION_GRANTED) {
+                perms.add(Manifest.permission.BLUETOOTH_ADVERTISE);
+            }
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                perms.add(Manifest.permission.BLUETOOTH_CONNECT);
+            }
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Android 13+ (API 33+)
+            if (checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED) {
+                perms.add(Manifest.permission.NEARBY_WIFI_DEVICES);
+            }
+        }
+
+        // Location is needed for BLE discovery on Android <= 11
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.R) {
+            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                perms.add(Manifest.permission.ACCESS_FINE_LOCATION);
+            }
+        }
+
+        if (!perms.isEmpty()) {
+            requestPermissions(perms.toArray(new String[0]), PERMISSION_REQ_CODE);
+        } else {
+            nearbySyncService.start();
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == PERMISSION_REQ_CODE) {
+            if (nearbySyncService != null) {
+                nearbySyncService.start();
+            }
+        }
+    }
+
+    public static String getLocalIpAddress() {
+        try {
+            List<NetworkInterface> interfaces = Collections.list(NetworkInterface.getNetworkInterfaces());
+            for (NetworkInterface intf : interfaces) {
+                if (intf.isLoopback() || !intf.isUp()) continue;
+                List<InetAddress> addrs = Collections.list(intf.getInetAddresses());
+                for (InetAddress addr : addrs) {
+                    if (!addr.isLoopbackAddress() && addr instanceof Inet4Address) {
+                        return addr.getHostAddress();
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return "127.0.0.1";
+    }
+
+    // --- Sync Callbacks ---
+
     @Override
     public void onPeerFound(String name, String host, int port) {
         notifyWebView("PEER_FOUND");
@@ -94,6 +205,21 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
     @Override
     public void onPeerLost(String name) {
         notifyWebView("PEER_LOST");
+    }
+
+    @Override
+    public void onPeerFound(String endpointId, String name) {
+        notifyWebView("NEARBY_PEER_FOUND");
+    }
+
+    @Override
+    public void onPeerConnected(String endpointId, String name) {
+        notifyWebView("NEARBY_PEER_CONNECTED");
+    }
+
+    @Override
+    public void onPeerDisconnected(String endpointId) {
+        notifyWebView("NEARBY_PEER_DISCONNECTED");
     }
 
     @Override
@@ -113,6 +239,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
     protected void onDestroy() {
         super.onDestroy();
         if (syncService != null) syncService.stop();
+        if (nearbySyncService != null) nearbySyncService.stop();
         if (multicastLock != null && multicastLock.isHeld()) {
             multicastLock.release();
         }
@@ -127,6 +254,8 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                 JSONObject obj = new JSONObject();
                 obj.put("deviceId", deviceId);
                 obj.put("deviceName", deviceName);
+                obj.put("ip", getLocalIpAddress());
+                obj.put("port", P2pSyncService.SYNC_PORT);
                 obj.put("isNativeApp", true);
                 return obj.toString();
             } catch (Exception e) {
@@ -150,12 +279,15 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
 
         @JavascriptInterface
         public String createGroup(String name, String userName) {
-            return dbHelper.createGroup(name, deviceId, userName).toString();
+            JSONObject g = dbHelper.createGroup(name, deviceId, userName);
+            if (nearbySyncService != null) nearbySyncService.broadcastSync();
+            return g.toString();
         }
 
         @JavascriptInterface
         public String joinGroup(String groupId, String userName) {
             dbHelper.joinGroupStub(groupId, deviceId, userName);
+            if (nearbySyncService != null) nearbySyncService.broadcastSync();
             return "{\"success\": true}";
         }
 
@@ -181,10 +313,11 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         }
 
         @JavascriptInterface
-        public String addExpense(String groupId, String desc, double amount, String paidBy, String splitBetweenJson) {
+        public String addExpense(String groupId, String desc, double amount, String paidBy, String splitBetweenJson, String category, String date) {
             try {
                 JSONArray split = new JSONArray(splitBetweenJson);
-                JSONObject exp = dbHelper.addExpense(hlcClock, groupId, desc, amount, paidBy, split, deviceId);
+                JSONObject exp = dbHelper.addExpense(hlcClock, groupId, desc, amount, paidBy, split, category, date, deviceId);
+                if (nearbySyncService != null) nearbySyncService.broadcastSync();
                 return exp.toString();
             } catch (Exception e) {
                 return "{}";
@@ -194,11 +327,13 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         @JavascriptInterface
         public void deleteExpense(String groupId, String expenseId) {
             dbHelper.deleteExpense(hlcClock, expenseId);
+            if (nearbySyncService != null) nearbySyncService.broadcastSync();
         }
 
         @JavascriptInterface
         public String settleDebt(String groupId, String payerId, String receiverId, double amount) {
             JSONObject s = dbHelper.settleDebt(hlcClock, groupId, payerId, receiverId, amount, deviceId);
+            if (nearbySyncService != null) nearbySyncService.broadcastSync();
             return s.toString();
         }
 
@@ -212,8 +347,14 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                     obj.put("name", p.name);
                     obj.put("host", p.host);
                     obj.put("port", p.port);
+                    obj.put("type", "Local Wi-Fi Mesh");
                     arr.put(obj);
                 } catch (Exception ignored) {}
+            }
+            if (nearbySyncService != null) {
+                for (JSONObject p : nearbySyncService.getNearbyPeers()) {
+                    arr.put(p);
+                }
             }
             return arr.toString();
         }
@@ -221,6 +362,119 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         @JavascriptInterface
         public void connectPeer(String host, int port) {
             syncService.connectToPeer(host, port);
+        }
+
+        // 1-Tap QR Scanner via Google Code Scanner
+        @JavascriptInterface
+        public void scanQrCode() {
+            runOnUiThread(() -> {
+                if (barcodeScanner == null) {
+                    Toast.makeText(MainActivity.this, "Scanner initializing...", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                barcodeScanner.startScan()
+                        .addOnSuccessListener(barcode -> {
+                            String raw = barcode.getRawValue();
+                            if (raw != null) {
+                                handleScannedCode(raw);
+                            }
+                        })
+                        .addOnFailureListener(e -> {
+                            Log.e(TAG, "QR scan cancelled or failed: " + e.getMessage());
+                            Toast.makeText(MainActivity.this, "Scan cancelled", Toast.LENGTH_SHORT).show();
+                        });
+            });
+        }
+
+        private void handleScannedCode(String raw) {
+            runOnUiThread(() -> {
+                try {
+                    String groupId = null;
+                    String ip = null;
+                    int port = P2pSyncService.SYNC_PORT;
+
+                    if (raw.startsWith("splitwise://join")) {
+                        android.net.Uri uri = android.net.Uri.parse(raw);
+                        groupId = uri.getQueryParameter("gid");
+                        ip = uri.getQueryParameter("ip");
+                        String pStr = uri.getQueryParameter("port");
+                        if (pStr != null) {
+                            try { port = Integer.parseInt(pStr); } catch (Exception ignored) {}
+                        }
+                    } else if (raw.startsWith("{")) {
+                        JSONObject obj = new JSONObject(raw);
+                        groupId = obj.optString("gid", obj.optString("groupId", null));
+                        ip = obj.optString("ip", obj.optString("host", null));
+                        port = obj.optInt("port", P2pSyncService.SYNC_PORT);
+                    } else {
+                        groupId = raw.trim();
+                    }
+
+                    if (groupId != null && !groupId.isEmpty()) {
+                        dbHelper.joinGroupStub(groupId, deviceId, deviceName);
+                        if (ip != null && !ip.isEmpty()) {
+                            syncService.connectToPeer(ip, port);
+                        }
+                        if (nearbySyncService != null) {
+                            nearbySyncService.broadcastSync();
+                        }
+                        webView.evaluateJavascript("if (window.onGroupJoinedViaQr) window.onGroupJoinedViaQr('" + groupId + "');", null);
+                        Toast.makeText(MainActivity.this, "Group joined & syncing!", Toast.LENGTH_SHORT).show();
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Error handling scanned QR", e);
+                }
+            });
+        }
+
+        // CSV Import & Export
+        @JavascriptInterface
+        public String importCsv(String csvContent, String groupId, String groupName) {
+            JSONObject res = dbHelper.importSplitwiseCsv(hlcClock, csvContent, groupId, groupName, deviceId);
+            if (nearbySyncService != null) nearbySyncService.broadcastSync();
+            return res.toString();
+        }
+
+        @JavascriptInterface
+        public String importLocalExportCsv() {
+            try {
+                File[] candidates = new File[] {
+                    new File("/data/data/com.termux/files/home/downloads/export.csv"),
+                    new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "export.csv"),
+                    new File(getExternalFilesDir(null), "export.csv")
+                };
+
+                File found = null;
+                for (File f : candidates) {
+                    if (f.exists() && f.canRead()) {
+                        found = f;
+                        break;
+                    }
+                }
+
+                if (found == null) {
+                    return "{\"success\": false, \"error\": \"export.csv not found in Downloads folder\"}";
+                }
+
+                StringBuilder sb = new StringBuilder();
+                try (BufferedReader reader = new BufferedReader(new FileReader(found))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        sb.append(line).append("\n");
+                    }
+                }
+
+                JSONObject res = dbHelper.importSplitwiseCsv(hlcClock, sb.toString(), null, "Flat Expenses", deviceId);
+                if (nearbySyncService != null) nearbySyncService.broadcastSync();
+                return res.toString();
+            } catch (Exception e) {
+                return "{\"success\": false, \"error\": \"" + e.getMessage() + "\"}";
+            }
+        }
+
+        @JavascriptInterface
+        public String exportCsv(String groupId) {
+            return dbHelper.exportSplitwiseCsv(groupId);
         }
     }
 }

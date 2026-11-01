@@ -314,12 +314,63 @@ class WebServer {
           amount,
           paidBy: body.paidBy,
           splitBetween: body.splitBetween,
+          category: body.category || 'General',
+          date: body.date || null,
           deviceId: this.deviceId,
         });
 
         this.broadcastUpdate('EXPENSE_ADDED', { groupId, expense: exp });
         sendJson(201, exp);
       });
+      return;
+    }
+
+    // POST /api/groups/import-csv
+    if (pathname === '/api/groups/import-csv' && req.method === 'POST') {
+      parseBody((err, body) => {
+        let csvContent = body && body.csv;
+        if (!csvContent) {
+          // Fallback to checking downloads/export.csv
+          const defaultPath = '/data/data/com.termux/files/home/downloads/export.csv';
+          if (fs.existsSync(defaultPath)) {
+            csvContent = fs.readFileSync(defaultPath, 'utf8');
+          }
+        }
+
+        if (!csvContent) {
+          sendJson(400, { error: 'No CSV content provided or export.csv not found' });
+          return;
+        }
+
+        try {
+          const resImport = expenses.importSplitwiseCsv(this.hlcClock, csvContent, {
+            groupId: body && body.groupId,
+            groupName: (body && body.groupName) || 'Flat Expenses',
+            deviceId: this.deviceId,
+          });
+          this.broadcastUpdate('GROUP_CREATED', { groupId: resImport.groupId });
+          sendJson(200, { success: true, ...resImport });
+        } catch (e) {
+          sendJson(500, { error: e.message });
+        }
+      });
+      return;
+    }
+
+    // GET /api/groups/:id/export-csv
+    const exportCsvMatch = pathname.match(/^\/api\/groups\/([a-zA-Z0-9_-]+)\/export-csv$/);
+    if (exportCsvMatch && req.method === 'GET') {
+      const groupId = exportCsvMatch[1];
+      try {
+        const csv = expenses.exportSplitwiseCsv(groupId);
+        res.writeHead(200, {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': `attachment; filename="splitwise_export_${groupId.slice(0, 8)}.csv"`,
+        });
+        res.end(csv);
+      } catch (e) {
+        sendJson(404, { error: e.message });
+      }
       return;
     }
 

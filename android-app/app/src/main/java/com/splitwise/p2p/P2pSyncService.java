@@ -15,7 +15,7 @@ import java.util.*;
 import java.util.concurrent.*;
 
 public class P2pSyncService {
-    public static final String SERVICE_TYPE = "_splitwisep2p._tcp.";
+    public static final String SERVICE_TYPE = "_splitwisep2p._tcp";
     public static final int SYNC_PORT = 47811;
 
     public interface OnSyncListener {
@@ -40,6 +40,8 @@ public class P2pSyncService {
     private final ExecutorService threadPool = Executors.newCachedThreadPool();
     private final Set<String> connectedPeers = Collections.synchronizedSet(new HashSet<>());
     private final Map<String, PeerInfo> discoveredPeers = new ConcurrentHashMap<>();
+    private final Queue<NsdServiceInfo> resolveQueue = new ConcurrentLinkedQueue<>();
+    private final java.util.concurrent.atomic.AtomicBoolean isResolving = new java.util.concurrent.atomic.AtomicBoolean(false);
 
     private volatile boolean running = false;
 
@@ -311,29 +313,13 @@ public class P2pSyncService {
 
             @Override
             public void onServiceFound(NsdServiceInfo service) {
-                if (service.getServiceType().equals(SERVICE_TYPE)) {
+                String type = service.getServiceType();
+                if (type != null && type.contains("splitwisep2p")) {
                     // Ignore self service
-                    if (service.getServiceName().contains(deviceId)) return;
+                    if (service.getServiceName() != null && service.getServiceName().contains(deviceId)) return;
 
-                    try {
-                        nsdManager.resolveService(service, new NsdManager.ResolveListener() {
-                            @Override
-                            public void onResolveFailed(NsdServiceInfo serviceInfo, int errorCode) {}
-
-                            @Override
-                            public void onServiceResolved(NsdServiceInfo serviceInfo) {
-                                String host = serviceInfo.getHost().getHostAddress();
-                                int port = serviceInfo.getPort();
-                                String name = serviceInfo.getServiceName();
-
-                                discoveredPeers.put(name, new PeerInfo(name, host, port, name));
-                                mainHandler.post(() -> listener.onPeerFound(name, host, port));
-
-                                // Automatically connect and sync with peer!
-                                connectToPeer(host, port);
-                            }
-                        });
-                    } catch (Exception ignored) {}
+                    resolveQueue.add(service);
+                    processNextResolve();
                 }
             }
 
@@ -356,6 +342,44 @@ public class P2pSyncService {
         try {
             nsdManager.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, discoveryListener);
         } catch (Exception ignored) {}
+    }
+
+    private synchronized void processNextResolve() {
+        if (!running || isResolving.get() || resolveQueue.isEmpty() || nsdManager == null) return;
+        final NsdServiceInfo nextService = resolveQueue.poll();
+        if (nextService == null) return;
+
+        isResolving.set(true);
+        try {
+            nsdManager.resolveService(nextService, new NsdManager.ResolveListener() {
+                @Override
+                public void onResolveFailed(NsdServiceInfo serviceInfo, int errorCode) {
+                    isResolving.set(false);
+                    processNextResolve();
+                }
+
+                @Override
+                public void onServiceResolved(NsdServiceInfo serviceInfo) {
+                    try {
+                        String host = serviceInfo.getHost().getHostAddress();
+                        int port = serviceInfo.getPort();
+                        String name = serviceInfo.getServiceName();
+
+                        discoveredPeers.put(name, new PeerInfo(name, host, port, name));
+                        mainHandler.post(() -> listener.onPeerFound(name, host, port));
+
+                        // Automatically connect and sync with peer!
+                        connectToPeer(host, port);
+                    } finally {
+                        isResolving.set(false);
+                        processNextResolve();
+                    }
+                }
+            });
+        } catch (Exception e) {
+            isResolving.set(false);
+            processNextResolve();
+        }
     }
 
     private void stopNsd() {

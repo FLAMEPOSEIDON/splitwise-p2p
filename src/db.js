@@ -55,6 +55,8 @@ db.exec(`
     amount REAL NOT NULL,
     paid_by TEXT NOT NULL,
     split_between TEXT NOT NULL,
+    category TEXT DEFAULT 'General',
+    date TEXT,
     created_by_device TEXT NOT NULL,
     hlc TEXT NOT NULL,
     deleted INTEGER NOT NULL DEFAULT 0,
@@ -62,6 +64,15 @@ db.exec(`
     FOREIGN KEY (group_id) REFERENCES groups(id)
   );
 `);
+
+// Migrations for existing databases
+try {
+  db.exec("ALTER TABLE expenses ADD COLUMN category TEXT DEFAULT 'General';");
+} catch (_) {}
+
+try {
+  db.exec("ALTER TABLE expenses ADD COLUMN date TEXT;");
+} catch (_) {}
 
 // Tracks the last HLC we've seen FROM each peer device, per group.
 // Lets sync.js ask a peer "give me everything after this point" instead

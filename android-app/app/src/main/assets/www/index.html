@@ -22,9 +22,14 @@
     </div>
 
     <div class="header-actions">
+      <!-- 1-Tap QR Scanner Button -->
+      <button class="btn-action-pill" id="btn-header-scan-qr" title="Scan QR Code to Join Group" style="background: rgba(16, 185, 129, 0.15); border-color: var(--primary); color: var(--primary);">
+        <span>📷 Scan QR</span>
+      </button>
+
       <div class="status-pill" id="status-pill" title="Click to view network sync status">
         <div class="status-dot online" id="status-dot"></div>
-        <span id="status-text">Native Wi-Fi Mesh</span>
+        <span id="status-text">Native Mesh</span>
       </div>
     </div>
   </header>
@@ -37,15 +42,15 @@
       <!-- Balance Hero Card -->
       <section class="hero-card">
         <div class="hero-subtitle">Overall Total Balance</div>
-        <div class="hero-balance zero" id="hero-balance">$0.00</div>
+        <div class="hero-balance zero" id="hero-balance">₹0.00</div>
         <div class="hero-details">
           <div class="hero-col">
             <div class="hero-col-label">You are owed</div>
-            <div class="hero-col-val" id="hero-owed" style="color: var(--primary);">$0.00</div>
+            <div class="hero-col-val" id="hero-owed" style="color: var(--primary);">₹0.00</div>
           </div>
           <div class="hero-col">
             <div class="hero-col-label">You owe</div>
-            <div class="hero-col-val" id="hero-owe" style="color: var(--rose);">$0.00</div>
+            <div class="hero-col-val" id="hero-owe" style="color: var(--rose);">₹0.00</div>
           </div>
         </div>
       </section>
@@ -53,7 +58,8 @@
       <!-- Section Actions -->
       <div class="section-header">
         <h2 class="section-title">Your Groups</h2>
-        <div class="section-actions">
+        <div class="section-actions" style="display: flex; gap: 6px;">
+          <button class="btn btn-secondary btn-sm" id="btn-import-csv-home" title="Import Splitwise CSV">📥 Import CSV</button>
           <button class="btn btn-secondary btn-sm" id="btn-join-group-modal">+ Join</button>
           <button class="btn btn-primary btn-sm" id="btn-create-group-modal">+ New Group</button>
         </div>
@@ -64,8 +70,11 @@
         <div class="empty-state">
           <div class="empty-state-icon">👥</div>
           <h3>No groups yet</h3>
-          <p>Create a group with your friends or join an existing one to start splitting expenses offline.</p>
-          <button class="btn btn-primary" id="btn-create-first-group">Create a Group</button>
+          <p>Create a group with your friends, join one, or import an existing Splitwise CSV export.</p>
+          <div style="display: flex; gap: 10px; justify-content: center; margin-top: 10px;">
+            <button class="btn btn-primary" id="btn-create-first-group">Create a Group</button>
+            <button class="btn btn-secondary" onclick="openModal('modal-import-csv')">📥 Import export.csv</button>
+          </div>
         </div>
       </div>
     </div>
@@ -84,8 +93,21 @@
           <h2 class="section-title" id="detail-group-name">Group Name</h2>
           <span class="group-id-badge" id="detail-group-id" title="Tap to copy Group ID">ID: ...</span>
         </div>
-        <div class="hero-subtitle" id="detail-group-meta">0 members • Total spend: $0.00</div>
-        <div class="hero-balance zero" id="detail-group-balance" style="font-size: 1.5rem; margin-top: 10px;">$0.00</div>
+        <div class="hero-subtitle" id="detail-group-meta">0 members • Total spend: ₹0.00</div>
+        <div class="hero-balance zero" id="detail-group-balance" style="font-size: 1.5rem; margin-top: 10px;">₹0.00</div>
+
+        <!-- Group Quick Actions: QR, Import, Export -->
+        <div class="group-action-row">
+          <button class="btn-action-pill" id="btn-show-group-qr" style="color: var(--cyan); border-color: var(--cyan);">
+            <span>📱 Show QR Code</span>
+          </button>
+          <button class="btn-action-pill" id="btn-import-csv-detail">
+            <span>📥 Import CSV</span>
+          </button>
+          <button class="btn-action-pill" id="btn-export-csv">
+            <span>📤 Export CSV</span>
+          </button>
+        </div>
       </div>
 
       <!-- Detail Tabs -->
@@ -97,26 +119,47 @@
 
       <!-- Tab Content: Expenses -->
       <div id="tab-content-expenses">
-        <div id="expenses-list-container"></div>
+        <!-- Search & Category Filters -->
+        <div class="search-filter-section">
+          <div class="search-box">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="expense-search-input" placeholder="Search by name, note, or person...">
+          </div>
+          <div class="filter-scroll" id="category-filter-chips">
+            <div class="filter-chip active" data-cat="ALL">All</div>
+            <div class="filter-chip" data-cat="Groceries">🥦 Groceries</div>
+            <div class="filter-chip" data-cat="Dining out">🍔 Dining out</div>
+            <div class="filter-chip" data-cat="Rent">🏠 Rent</div>
+            <div class="filter-chip" data-cat="Household supplies">🧻 Household</div>
+            <div class="filter-chip" data-cat="Cleaning">🧹 Cleaning</div>
+            <div class="filter-chip" data-cat="General">🧾 General</div>
+            <div class="filter-chip" data-cat="Payment">🤝 Payments</div>
+          </div>
+        </div>
+
+        <div id="expenses-list-container">
+          <!-- Dynamically populated -->
+        </div>
       </div>
 
       <!-- Tab Content: Balances & Settlements -->
       <div id="tab-content-balances" style="display: none;">
-        <h3 style="font-size: 1rem; margin-bottom: 12px; color: var(--text-muted);">Suggested Settlements</h3>
+        <h3 style="font-size: 1rem; margin-bottom: 12px; color: var(--text-muted);">Suggested Settlements (Min. Transactions)</h3>
         <div id="settlements-list-container"></div>
 
-        <h3 style="font-size: 1rem; margin: 20px 0 12px; color: var(--text-muted);">Individual Balances</h3>
+        <h3 style="font-size: 1rem; margin: 20px 0 12px; color: var(--text-muted);">Individual Balances (₹)</h3>
         <div id="balances-list-container"></div>
       </div>
 
       <!-- Tab Content: Members & QR -->
       <div id="tab-content-members" style="display: none;">
         <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 18px; margin-bottom: 16px;">
-          <h4 style="margin-bottom: 8px;">Share Group ID</h4>
+          <h4 style="margin-bottom: 8px;">Share Group QR Code</h4>
           <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 16px;">
-            Friends on the same Wi-Fi can join this group using this ID.
+            Friends can scan this QR code with their camera to join this group immediately without typing!
           </p>
-          <button class="btn btn-primary btn-block" id="btn-copy-group-id">Copy Group ID</button>
+          <div id="group-qr-container" style="max-width: 200px; margin: 0 auto 16px; border-radius: 12px; overflow: hidden; background: white; padding: 8px;"></div>
+          <button class="btn btn-secondary btn-block btn-sm" id="btn-copy-group-id">Copy Group ID</button>
         </div>
 
         <h4 style="font-size: 0.95rem; margin-bottom: 10px; color: var(--text-muted);">Group Members</h4>
@@ -127,107 +170,64 @@
     <!-- VIEW 3: Network & Mesh Sync -->
     <div id="view-network" style="display: none;">
       <div class="section-header">
-        <h2 class="section-title">Wi-Fi Mesh & Sync</h2>
+        <h2 class="section-title">Network Mesh & Quick Share</h2>
       </div>
 
       <div class="group-header-card">
         <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
           <div class="status-dot online"></div>
-          <h3 style="font-size: 1.1rem;">Native Android Mesh</h3>
+          <h3 style="font-size: 1.1rem;">Offline Mesh Discovery</h3>
         </div>
         <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 14px;">
-          All phones with Splitwise P2P installed automatically discover each other via Wi-Fi mDNS and sync their databases using Hybrid Logical Clocks.
+          Supports <strong>Google Quick Share (Nearby Connections)</strong> via BLE + Wi-Fi Direct and local Wi-Fi TCP sync.
         </p>
         <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: var(--radius-sm); font-size: 0.85rem;">
-          <div><strong>Device ID:</strong> <span id="net-device-id" style="font-family: monospace;">...</span></div>
-          <div style="margin-top: 4px;"><strong>Device Name:</strong> <span id="net-device-name">...</span></div>
+          <div><strong>Your Device ID:</strong> <span id="net-device-id" style="font-family: monospace;">...</span></div>
+          <div style="margin-top: 4px;"><strong>Your Device Name:</strong> <span id="net-device-name">...</span></div>
+          <div style="margin-top: 4px;"><strong>Host IP:Port:</strong> <span id="net-local-ip" style="font-family: monospace; color: var(--cyan);">...</span></div>
+          <div style="margin-top: 4px;"><strong>Quick Share Status:</strong> <span id="net-quickshare-status" style="color: var(--primary);">Active (BLE + Wi-Fi Direct)</span></div>
         </div>
       </div>
 
       <div class="section-header">
-        <h3 class="section-title" style="font-size: 1rem;">Discovered Wi-Fi Peers</h3>
+        <h3 class="section-title" style="font-size: 1rem;">Discovered Mesh Peers</h3>
         <button class="btn btn-secondary btn-sm" id="btn-manual-peer-modal">+ Connect IP</button>
       </div>
 
-      <div id="peers-list-container"></div>
-    </div>
-
-    <!-- VIEW 4: MongoDB Cloud Addon -->
-    <div id="view-mongo" style="display: none;">
-      <div class="section-header">
-        <h2 class="section-title">Cloud Storage Addon (MongoDB)</h2>
-      </div>
-
-      <div class="hero-card" style="border-color: rgba(6, 182, 212, 0.4); background: linear-gradient(135deg, rgba(6, 182, 212, 0.08), rgba(16, 185, 129, 0.08));">
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-          <div style="display: flex; align-items: center; gap: 10px;">
-            <div style="width: 38px; height: 38px; border-radius: 10px; background: #00ed64; display: flex; align-items: center; justify-content: center; font-size: 1.3rem;">
-              🍃
-            </div>
-            <div>
-              <h3 style="font-size: 1.05rem;">MongoDB Atlas (Free)</h3>
-              <span id="mongo-status-badge" style="font-size: 0.78rem; color: var(--text-muted);">Status: Local Mode Only</span>
-            </div>
-          </div>
-          <button class="btn btn-secondary btn-sm" id="btn-sync-mongo-now" style="display: none;">☁️ Sync Now</button>
-        </div>
-        <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; margin-bottom: 14px;">
-          Run <strong>100% locally</strong> or connect your free MongoDB Atlas database as an addon. When enabled, data is stored on <strong>both local and cloud</strong>!
-        </p>
-
-        <!-- Mode Toggle -->
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px;">
-          <button type="button" class="btn btn-secondary" id="mode-btn-local" style="border-color: var(--primary); background: rgba(16, 185, 129, 0.15); font-size: 0.82rem;">
-            📱 Local Only
-          </button>
-          <button type="button" class="btn btn-secondary" id="mode-btn-mongo" style="font-size: 0.82rem;">
-            ☁️ Local + MongoDB
-          </button>
-        </div>
-
-        <!-- MongoDB Config Form -->
-        <form id="form-mongo-addon" style="display: none;">
-          <div class="form-group">
-            <label class="form-label">MongoDB Connection URI</label>
-            <input type="text" class="form-input" id="mongo-uri" placeholder="mongodb+srv://user:pass@cluster0.mongodb.net/splitwise" required>
-            <span style="font-size: 0.75rem; color: var(--text-dim); margin-top: 4px; display: block;">
-              Get a free database at mongodb.com/atlas (M0 Sandbox is 100% free forever)
-            </span>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Database Name</label>
-            <input type="text" class="form-input" id="mongo-dbname" value="splitwise_p2p">
-          </div>
-          <div style="display: flex; gap: 10px;">
-            <button type="submit" class="btn btn-primary" style="flex: 1;" id="btn-save-mongo">Save & Connect</button>
-            <button type="button" class="btn btn-secondary" id="btn-disable-mongo" style="color: var(--rose);">Disable</button>
-          </div>
-        </form>
-
-        <div id="mongo-sync-info" style="margin-top: 14px; font-size: 0.8rem; color: var(--text-dim); text-align: center; display: none;">
-          Last cloud sync: <span id="mongo-last-sync-time">Never</span>
-        </div>
+      <div id="peers-list-container">
+        <!-- Dynamically populated -->
       </div>
     </div>
 
   </main>
 
-  <!-- Floating Action Button: Add Expense -->
+  <!-- Floating Add Expense Button -->
   <button class="fab" id="fab-add-expense" style="display: none;" title="Add Expense">+</button>
 
   <!-- Bottom Navigation Bar -->
   <nav class="bottom-nav">
     <div class="nav-item active" data-view="view-groups">
-      <span class="nav-icon">👥</span>
-      <span>Groups</span>
+      <div class="nav-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+          <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>
+      </div>
+      <div class="nav-label">Groups</div>
     </div>
+
     <div class="nav-item" data-view="view-network">
-      <span class="nav-icon">📡</span>
-      <span>Wi-Fi Mesh</span>
-    </div>
-    <div class="nav-item" data-view="view-mongo">
-      <span class="nav-icon">☁️</span>
-      <span>MongoDB</span>
+      <div class="nav-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+          <path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+          <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+          <line x1="12" y1="20" x2="12.01" y2="20"/>
+        </svg>
+      </div>
+      <div class="nav-label">Network</div>
     </div>
   </nav>
 
@@ -241,20 +241,51 @@
       <form id="form-add-expense">
         <div class="form-group">
           <label class="form-label">Description</label>
-          <input type="text" class="form-input" id="exp-desc" placeholder="e.g. Dinner, Groceries, Uber" required>
+          <input type="text" class="form-input" id="exp-desc" placeholder="e.g. Dinner, Groceries, Rent, Uber" required>
         </div>
-        <div class="form-group">
-          <label class="form-label">Amount ($)</label>
-          <input type="number" step="0.01" min="0.01" class="form-input" id="exp-amount" placeholder="0.00" required>
+
+        <div style="display: flex; gap: 10px;">
+          <div class="form-group" style="flex: 1.2;">
+            <label class="form-label">Amount (₹)</label>
+            <input type="number" step="0.01" min="0.01" class="form-input" id="exp-amount" placeholder="0.00" required>
+          </div>
+          <div class="form-group" style="flex: 1;">
+            <label class="form-label">Date</label>
+            <input type="date" class="form-input" id="exp-date" required>
+          </div>
         </div>
-        <div class="form-group">
-          <label class="form-label">Paid by</label>
-          <select class="form-select" id="exp-paid-by" required></select>
+
+        <div style="display: flex; gap: 10px;">
+          <div class="form-group" style="flex: 1;">
+            <label class="form-label">Category</label>
+            <select class="form-select" id="exp-category">
+              <option value="General">🧾 General</option>
+              <option value="Groceries">🥦 Groceries</option>
+              <option value="Dining out">🍔 Dining out</option>
+              <option value="Rent">🏠 Rent</option>
+              <option value="Household supplies">🧻 Household supplies</option>
+              <option value="Cleaning">🧹 Cleaning</option>
+              <option value="Utilities">💡 Utilities</option>
+              <option value="Transportation">🚗 Transportation</option>
+              <option value="Entertainment">🎬 Entertainment</option>
+            </select>
+          </div>
+          <div class="form-group" style="flex: 1;">
+            <label class="form-label">Paid by</label>
+            <select class="form-select" id="exp-paid-by" required></select>
+          </div>
         </div>
+
         <div class="form-group">
-          <label class="form-label">Split equally between</label>
+          <label class="form-label">Split Method</label>
+          <div class="split-mode-toggle">
+            <div class="split-mode-btn active" id="btn-split-equal">Split Equally</div>
+            <div class="split-mode-btn" id="btn-split-custom">Exact Shares (₹)</div>
+          </div>
           <div class="checkbox-group" id="exp-split-checkboxes"></div>
+          <div id="exp-custom-split-container" style="display: none; margin-top: 8px;"></div>
         </div>
+
         <button type="submit" class="btn btn-primary btn-block">Save Expense</button>
       </form>
     </div>
@@ -270,7 +301,7 @@
       <form id="form-create-group">
         <div class="form-group">
           <label class="form-label">Group Name</label>
-          <input type="text" class="form-input" id="create-group-name" placeholder="e.g. Goa Trip, Roommates, Dinner" required>
+          <input type="text" class="form-input" id="create-group-name" placeholder="e.g. Goa Trip, Roommates, Flat Expenses" required>
         </div>
         <div class="form-group">
           <label class="form-label">Your Name</label>
@@ -289,6 +320,12 @@
         <button class="btn-close" data-close="modal-join-group">&times;</button>
       </div>
       <form id="form-join-group">
+        <div style="text-align: center; margin-bottom: 14px;">
+          <button type="button" class="btn btn-secondary btn-block" id="btn-scan-qr-join" style="border-color: var(--primary); color: var(--primary);">
+            📷 Scan Friend's Group QR Code
+          </button>
+          <div style="font-size: 0.8rem; color: var(--text-dim); margin: 8px 0;">— OR ENTER MANUALLY —</div>
+        </div>
         <div class="form-group">
           <label class="form-label">Group ID</label>
           <input type="text" class="form-input" id="join-group-id" placeholder="Paste Group ID from friend" required>
@@ -299,6 +336,57 @@
         </div>
         <button type="submit" class="btn btn-primary btn-block">Join Group</button>
       </form>
+    </div>
+  </div>
+
+  <!-- MODAL: Import Splitwise CSV -->
+  <div class="modal-overlay" id="modal-import-csv">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">Import Splitwise CSV</h3>
+        <button class="btn-close" data-close="modal-import-csv">&times;</button>
+      </div>
+
+      <!-- Quick 1-tap Termux / Downloads folder button -->
+      <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid var(--primary); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 16px; text-align: center;">
+        <h4 style="color: var(--primary); margin-bottom: 4px;">⚡ Found export.csv</h4>
+        <p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 10px;">
+          Import all 200+ expenses and members directly from <code>downloads/export.csv</code>!
+        </p>
+        <button type="button" class="btn btn-primary btn-block" id="btn-quick-import-downloads">
+          ⚡ 1-Tap Import downloads/export.csv
+        </button>
+      </div>
+
+      <div style="text-align: center; font-size: 0.8rem; color: var(--text-dim); margin-bottom: 12px;">— OR CHOOSE CSV FILE —</div>
+
+      <div class="form-group">
+        <label class="form-label">Select Splitwise .csv file</label>
+        <input type="file" id="csv-file-input" accept=".csv" class="form-input">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Group Name (for new group)</label>
+        <input type="text" id="csv-group-name" value="Flat Expenses" class="form-input">
+      </div>
+
+      <button type="button" class="btn btn-secondary btn-block" id="btn-run-csv-import">Import File</button>
+    </div>
+  </div>
+
+  <!-- MODAL: Show Group QR Code -->
+  <div class="modal-overlay" id="modal-group-qr">
+    <div class="modal-content" style="text-align: center;">
+      <div class="modal-header">
+        <h3 class="modal-title">Group QR Code</h3>
+        <button class="btn-close" data-close="modal-group-qr">&times;</button>
+      </div>
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 14px;">
+        Point another phone camera at this QR code to join and sync instantly.
+      </p>
+      <div id="modal-qr-display" style="max-width: 220px; margin: 0 auto 16px; border-radius: 12px; background: white; padding: 12px;"></div>
+      <div style="font-family: monospace; font-size: 0.78rem; color: var(--cyan); margin-bottom: 12px;" id="modal-qr-subtext"></div>
+      <button class="btn btn-secondary btn-block" id="btn-modal-copy-gid">Copy Group ID</button>
     </div>
   </div>
 
@@ -333,23 +421,21 @@
       <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 16px;">
         <div id="settle-summary-text" style="font-size: 1.05rem; font-weight: 700; text-align: center;">...</div>
       </div>
-      <button class="btn btn-primary btn-block" id="btn-confirm-settle">Record as Settled</button>
+
+      <!-- UPI Payment Shortcut -->
+      <a id="btn-pay-upi" href="#" class="btn-upi" style="display: none; text-decoration: none;">
+        <span>⚡ Pay via UPI (GPay / PhonePe / Paytm)</span>
+      </a>
+
+      <button class="btn btn-primary btn-block" id="btn-confirm-settle" style="margin-top: 10px;">Record as Settled in Ledger</button>
     </div>
   </div>
 
   <!-- Toast Notification -->
   <div class="toast" id="toast">Update saved</div>
 
-  <!-- Dummy hidden elements for compatibility with shared app.js -->
-  <div style="display:none;">
-    <button id="btn-cert-header"></button>
-    <section id="install-banner"><button id="btn-install-pwa"></button></section>
-    <div id="view-cert"></div>
-    <div id="group-qr-container"></div>
-    <div id="network-qr-container"></div>
-    <span id="net-local-ip"></span>
-  </div>
-
+  <!-- Zero-dependency QR Code generator library in JS -->
+  <script src="qrcode.js"></script>
   <!-- Application Script -->
   <script src="app.js"></script>
 </body>

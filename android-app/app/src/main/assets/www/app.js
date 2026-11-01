@@ -1,8 +1,14 @@
 /**
  * app.js — Unified Client Application for Splitwise P2P.
- * Works seamlessly inside the native Android APK (via AndroidBridge)
- * AND in web browsers / PWAs via REST and WebSockets.
- * Supports dual storage: Local SQLite / IndexedDB + Optional Free MongoDB Atlas.
+ * Supports:
+ *  - Indian Rupees (INR / ₹) currency formatting across all views
+ *  - Official Splitwise CSV Import (e.g. export.csv) & Export
+ *  - Category management (Groceries, Dining out, Rent, Cleaning, General, etc.)
+ *  - Date-based expense tracking & real-time search/filters
+ *  - 1-Tap Google Code Scanner & QR Code Generator
+ *  - Offline Mesh Sync via Google Quick Share (Nearby Connections) & Local Wi-Fi
+ *  - UPI 1-Tap settlement links (GPay, PhonePe, Paytm)
+ *  - Dual Native Android APK + PWA Web mode
  */
 
 // State
@@ -17,6 +23,22 @@ const state = {
   wsConnected: false,
   deferredInstallPrompt: null,
   pendingSettlement: null,
+  categoryFilter: 'ALL',
+  searchQuery: '',
+  splitMode: 'EQUAL', // 'EQUAL' or 'CUSTOM'
+};
+
+const CATEGORY_ICONS = {
+  'Groceries': '🥦',
+  'Dining out': '🍔',
+  'Rent': '🏠',
+  'Household supplies': '🧻',
+  'Cleaning': '🧹',
+  'Payment': '🤝',
+  'Utilities': '💡',
+  'Transportation': '🚗',
+  'Entertainment': '🎬',
+  'General': '🧾',
 };
 
 // DOM Elements
@@ -28,6 +50,7 @@ const el = {
   installBanner: document.getElementById('install-banner'),
   btnInstallPwa: document.getElementById('btn-install-pwa'),
   btnCertHeader: document.getElementById('btn-cert-header'),
+  btnHeaderScanQr: document.getElementById('btn-header-scan-qr'),
 
   // Views
   viewGroups: document.getElementById('view-groups'),
@@ -35,19 +58,6 @@ const el = {
   viewNetwork: document.getElementById('view-network'),
   viewCert: document.getElementById('view-cert'),
   viewMongo: document.getElementById('view-mongo'),
-
-  // MongoDB Addon
-  modeBtnLocal: document.getElementById('mode-btn-local'),
-  modeBtnMongo: document.getElementById('mode-btn-mongo'),
-  formMongoAddon: document.getElementById('form-mongo-addon'),
-  mongoUri: document.getElementById('mongo-uri'),
-  mongoDbname: document.getElementById('mongo-dbname'),
-  btnSaveMongo: document.getElementById('btn-save-mongo'),
-  btnDisableMongo: document.getElementById('btn-disable-mongo'),
-  btnSyncMongoNow: document.getElementById('btn-sync-mongo-now'),
-  mongoStatusBadge: document.getElementById('mongo-status-badge'),
-  mongoSyncInfo: document.getElementById('mongo-sync-info'),
-  mongoLastSyncTime: document.getElementById('mongo-last-sync-time'),
 
   // Hero
   heroBalance: document.getElementById('hero-balance'),
@@ -59,6 +69,7 @@ const el = {
   btnCreateGroupModal: document.getElementById('btn-create-group-modal'),
   btnCreateFirstGroup: document.getElementById('btn-create-first-group'),
   btnJoinGroupModal: document.getElementById('btn-join-group-modal'),
+  btnImportCsvHome: document.getElementById('btn-import-csv-home'),
   btnBackToGroups: document.getElementById('btn-back-to-groups'),
 
   // Group Detail
@@ -66,6 +77,10 @@ const el = {
   detailGroupId: document.getElementById('detail-group-id'),
   detailGroupMeta: document.getElementById('detail-group-meta'),
   detailGroupBalance: document.getElementById('detail-group-balance'),
+  btnShowGroupQr: document.getElementById('btn-show-group-qr'),
+  btnImportCsvDetail: document.getElementById('btn-import-csv-detail'),
+  btnExportCsv: document.getElementById('btn-export-csv'),
+
   tabContentExpenses: document.getElementById('tab-content-expenses'),
   tabContentBalances: document.getElementById('tab-content-balances'),
   tabContentMembers: document.getElementById('tab-content-members'),
@@ -77,21 +92,29 @@ const el = {
   btnCopyGroupId: document.getElementById('btn-copy-group-id'),
   fabAddExpense: document.getElementById('fab-add-expense'),
 
+  // Filters
+  expenseSearchInput: document.getElementById('expense-search-input'),
+  categoryFilterChips: document.getElementById('category-filter-chips'),
+
   // Network
   netDeviceId: document.getElementById('net-device-id'),
   netDeviceName: document.getElementById('net-device-name'),
   netLocalIp: document.getElementById('net-local-ip'),
   peersListContainer: document.getElementById('peers-list-container'),
   btnManualPeerModal: document.getElementById('btn-manual-peer-modal'),
-  networkQrContainer: document.getElementById('network-qr-container'),
 
   // Modals
   modalAddExpense: document.getElementById('modal-add-expense'),
   formAddExpense: document.getElementById('form-add-expense'),
   expDesc: document.getElementById('exp-desc'),
   expAmount: document.getElementById('exp-amount'),
+  expDate: document.getElementById('exp-date'),
+  expCategory: document.getElementById('exp-category'),
   expPaidBy: document.getElementById('exp-paid-by'),
   expSplitCheckboxes: document.getElementById('exp-split-checkboxes'),
+  expCustomSplitContainer: document.getElementById('exp-custom-split-container'),
+  btnSplitEqual: document.getElementById('btn-split-equal'),
+  btnSplitCustom: document.getElementById('btn-split-custom'),
 
   modalCreateGroup: document.getElementById('modal-create-group'),
   formCreateGroup: document.getElementById('form-create-group'),
@@ -102,6 +125,18 @@ const el = {
   formJoinGroup: document.getElementById('form-join-group'),
   joinGroupId: document.getElementById('join-group-id'),
   joinYourName: document.getElementById('join-your-name'),
+  btnScanQrJoin: document.getElementById('btn-scan-qr-join'),
+
+  modalImportCsv: document.getElementById('modal-import-csv'),
+  btnQuickImportDownloads: document.getElementById('btn-quick-import-downloads'),
+  csvFileInput: document.getElementById('csv-file-input'),
+  csvGroupName: document.getElementById('csv-group-name'),
+  btnRunCsvImport: document.getElementById('btn-run-csv-import'),
+
+  modalGroupQr: document.getElementById('modal-group-qr'),
+  modalQrDisplay: document.getElementById('modal-qr-display'),
+  modalQrSubtext: document.getElementById('modal-qr-subtext'),
+  btnModalCopyGid: document.getElementById('btn-modal-copy-gid'),
 
   modalManualPeer: document.getElementById('modal-manual-peer'),
   formManualPeer: document.getElementById('form-manual-peer'),
@@ -110,13 +145,55 @@ const el = {
 
   modalSettleUp: document.getElementById('modal-settle-up'),
   settleSummaryText: document.getElementById('settle-summary-text'),
+  btnPayUpi: document.getElementById('btn-pay-upi'),
   btnConfirmSettle: document.getElementById('btn-confirm-settle'),
 
   toast: document.getElementById('toast'),
 };
 
 // -------------------------------------------------------------
-// 1. IndexedDB Offline Storage Helper
+// 1. Currency & Utility Helpers (INR / ₹)
+// -------------------------------------------------------------
+
+function formatMoney(amount) {
+  const num = Math.abs(amount || 0);
+  const formatted = num.toLocaleString('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return `${amount < 0 ? '-' : ''}₹${formatted}`;
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  } catch (_) {
+    return dateStr;
+  }
+}
+
+function escapeHtml(text) {
+  if (text === null || text === undefined) return '';
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function showToast(msg) {
+  if (!el.toast) return;
+  el.toast.textContent = msg;
+  el.toast.classList.add('show');
+  setTimeout(() => el.toast.classList.remove('show'), 3200);
+}
+
+// -------------------------------------------------------------
+// 2. IndexedDB Offline Cache
 // -------------------------------------------------------------
 const IDB_NAME = 'SplitwiseP2P_DB';
 const IDB_VERSION = 1;
@@ -126,15 +203,9 @@ function openIDB() {
     const req = indexedDB.open(IDB_NAME, IDB_VERSION);
     req.onupgradeneeded = (e) => {
       const db = e.target.result;
-      if (!db.objectStoreNames.contains('groups')) {
-        db.createObjectStore('groups', { keyPath: 'id' });
-      }
-      if (!db.objectStoreNames.contains('groupData')) {
-        db.createObjectStore('groupData', { keyPath: 'groupId' });
-      }
-      if (!db.objectStoreNames.contains('info')) {
-        db.createObjectStore('info', { keyPath: 'id' });
-      }
+      if (!db.objectStoreNames.contains('groups')) db.createObjectStore('groups', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('groupData')) db.createObjectStore('groupData', { keyPath: 'groupId' });
+      if (!db.objectStoreNames.contains('info')) db.createObjectStore('info', { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -146,7 +217,7 @@ async function idbSave(storeName, item) {
     const db = await openIDB();
     const tx = db.transaction(storeName, 'readwrite');
     tx.objectStore(storeName).put(item);
-  } catch {}
+  } catch (_) {}
 }
 
 async function idbGet(storeName, key) {
@@ -158,113 +229,60 @@ async function idbGet(storeName, key) {
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => resolve(null);
     });
-  } catch {
+  } catch (_) {
     return null;
   }
 }
 
 // -------------------------------------------------------------
-// 2. Toast & Utilities
+// 3. Modals & View Switching
 // -------------------------------------------------------------
-function showToast(msg) {
-  if (!el.toast) return;
-  el.toast.textContent = msg;
-  el.toast.classList.add('show');
-  setTimeout(() => el.toast.classList.remove('show'), 3000);
+
+function openModal(modalId) {
+  const m = document.getElementById(modalId);
+  if (m) m.classList.add('open');
 }
 
-function formatMoney(amount) {
-  const n = parseFloat(amount || 0);
-  return '$' + Math.abs(n).toFixed(2);
+function closeModal(modalId) {
+  const m = document.getElementById(modalId);
+  if (m) m.classList.remove('open');
 }
 
-// -------------------------------------------------------------
-// 3. Navigation & Views
-// -------------------------------------------------------------
+document.querySelectorAll('.btn-close').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const modalId = btn.getAttribute('data-close');
+    if (modalId) closeModal(modalId);
+  });
+});
+
+window.addEventListener('click', (e) => {
+  if (e.target.classList.contains('modal-overlay')) {
+    e.target.classList.remove('open');
+  }
+});
+
 function switchView(viewId) {
   state.activeView = viewId;
-  const views = [el.viewGroups, el.viewGroupDetail, el.viewNetwork, el.viewCert, el.viewMongo];
+  const views = ['view-groups', 'view-group-detail', 'view-network', 'view-cert', 'view-mongo'];
   views.forEach((v) => {
-    if (v) v.style.display = 'none';
+    const elem = document.getElementById(v);
+    if (elem) elem.style.display = v === viewId ? 'block' : 'none';
   });
-
-  const target = document.getElementById(viewId);
-  if (target) target.style.display = 'block';
 
   if (el.fabAddExpense) {
     el.fabAddExpense.style.display = viewId === 'view-group-detail' ? 'flex' : 'none';
   }
 
   document.querySelectorAll('.bottom-nav .nav-item').forEach((item) => {
-    if (item.getAttribute('data-view') === viewId) {
-      item.classList.add('active');
-    } else {
-      item.classList.remove('active');
-    }
+    if (item.getAttribute('data-view') === viewId) item.classList.add('active');
+    else item.classList.remove('active');
   });
 
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 // -------------------------------------------------------------
-// 4. WebSocket & Sync Engine
-// -------------------------------------------------------------
-function connectWebSocket() {
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${proto}//${window.location.host}/ws`;
-
-  if (el.statusDot) el.statusDot.className = 'status-dot syncing';
-  if (el.statusText) el.statusText.textContent = 'Connecting...';
-
-  try {
-    state.ws = new WebSocket(wsUrl);
-
-    state.ws.onopen = () => {
-      state.wsConnected = true;
-      if (el.statusDot) el.statusDot.className = 'status-dot online';
-      if (el.statusText) el.statusText.textContent = 'Wi-Fi Synced';
-      refreshData();
-    };
-
-    state.ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (
-          msg.type === 'GROUP_CREATED' ||
-          msg.type === 'GROUP_JOINED' ||
-          msg.type === 'EXPENSE_ADDED' ||
-          msg.type === 'EXPENSE_DELETED' ||
-          msg.type === 'SETTLEMENT_RECORDED' ||
-          msg.type === 'MONGO_SYNC_COMPLETE'
-        ) {
-          refreshData();
-          if (state.activeGroupId) {
-            loadGroupDetail(state.activeGroupId, false);
-          }
-          showToast('Data synced');
-        }
-      } catch {}
-    };
-
-    state.ws.onclose = () => {
-      state.wsConnected = false;
-      if (el.statusDot) el.statusDot.className = 'status-dot';
-      if (el.statusText) el.statusText.textContent = 'Offline (Local)';
-      setTimeout(connectWebSocket, 4000);
-    };
-
-    state.ws.onerror = () => {
-      state.ws.close();
-    };
-  } catch {
-    if (el.statusDot) el.statusDot.className = 'status-dot';
-    if (el.statusText) el.statusText.textContent = 'Offline';
-    setTimeout(connectWebSocket, 4000);
-  }
-}
-
-// -------------------------------------------------------------
-// 5. API Requests (Dual Native APK + Web/PWA)
+// 4. API Requests (Dual Native APK + Web/PWA)
 // -------------------------------------------------------------
 const isNativeApp = typeof window.AndroidBridge !== 'undefined';
 
@@ -274,7 +292,13 @@ if (isNativeApp) {
     if (state.activeGroupId) {
       loadGroupDetail(state.activeGroupId, false);
     }
-    showToast('Synced via Android Wi-Fi Mesh');
+    showToast('Database synced via Mesh');
+  };
+
+  window.onGroupJoinedViaQr = async function(groupId) {
+    showToast('Group joined via QR! Syncing...');
+    await refreshData();
+    openGroupDetail(groupId);
   };
 }
 
@@ -287,8 +311,8 @@ async function fetchApi(endpoint, options = {}) {
         return {
           deviceId: info.deviceId,
           deviceName: info.deviceName,
-          localIPs: ['Android Device'],
-          httpsPort: 8443,
+          localIPs: [info.ip || '127.0.0.1'],
+          httpsPort: info.port || 47811,
           peers: peers,
           isNativeApp: true,
         };
@@ -316,7 +340,9 @@ async function fetchApi(endpoint, options = {}) {
           body.description,
           body.amount,
           body.paidBy,
-          JSON.stringify(body.splitBetween || [])
+          JSON.stringify(body.splitBetween || []),
+          body.category || 'General',
+          body.date || ''
         ));
       }
       const matchDelExp = endpoint.match(/^\/api\/groups\/([a-zA-Z0-9_-]+)\/expenses\/([a-zA-Z0-9_-]+)$/);
@@ -334,6 +360,18 @@ async function fetchApi(endpoint, options = {}) {
           body.amount
         ));
       }
+      if (endpoint === '/api/groups/import-csv' && options.method === 'POST') {
+        const body = JSON.parse(options.body || '{}');
+        if (body.useLocalFile) {
+          return JSON.parse(window.AndroidBridge.importLocalExportCsv());
+        } else {
+          return JSON.parse(window.AndroidBridge.importCsv(body.csv || '', body.groupId || '', body.groupName || 'Flat Expenses'));
+        }
+      }
+      const matchExport = endpoint.match(/^\/api\/groups\/([a-zA-Z0-9_-]+)\/export-csv$/);
+      if (matchExport && (!options.method || options.method === 'GET')) {
+        return window.AndroidBridge.exportCsv(matchExport[1]);
+      }
       if (endpoint === '/api/peers' && (!options.method || options.method === 'GET')) {
         const peers = JSON.parse(window.AndroidBridge.getPeers() || '[]');
         return { peers, connected: [] };
@@ -349,6 +387,7 @@ async function fetchApi(endpoint, options = {}) {
     }
   }
 
+  // Web / PWA browser mode
   try {
     const res = await fetch(endpoint, {
       ...options,
@@ -358,11 +397,61 @@ async function fetchApi(endpoint, options = {}) {
       },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const contentType = res.headers.get('content-type');
+    if (contentType && contentType.includes('text/csv')) {
+      return await res.text();
+    }
     return await res.json();
   } catch (err) {
     return null;
   }
 }
+
+// -------------------------------------------------------------
+// 5. WebSocket Live Mesh Sync (Web Mode)
+// -------------------------------------------------------------
+
+function connectWebSocket() {
+  if (isNativeApp) return;
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${proto}//${window.location.host}/ws`;
+
+  el.statusDot.className = 'status-dot syncing';
+  el.statusText.textContent = 'Connecting...';
+
+  try {
+    state.ws = new WebSocket(wsUrl);
+    state.ws.onopen = () => {
+      state.wsConnected = true;
+      el.statusDot.className = 'status-dot online';
+      el.statusText.textContent = 'Wi-Fi Synced';
+      refreshData();
+    };
+    state.ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        refreshData();
+        if (state.activeGroupId) loadGroupDetail(state.activeGroupId, false);
+        showToast('Database synced across Wi-Fi');
+      } catch (_) {}
+    };
+    state.ws.onclose = () => {
+      state.wsConnected = false;
+      el.statusDot.className = 'status-dot';
+      el.statusText.textContent = 'Offline';
+      setTimeout(connectWebSocket, 4000);
+    };
+    state.ws.onerror = () => state.ws.close();
+  } catch (_) {
+    el.statusDot.className = 'status-dot';
+    el.statusText.textContent = 'Offline';
+    setTimeout(connectWebSocket, 4000);
+  }
+}
+
+// -------------------------------------------------------------
+// 6. Device Info & Network Mesh Rendering
+// -------------------------------------------------------------
 
 async function loadInfo() {
   const info = await fetchApi('/api/info');
@@ -386,6 +475,10 @@ function renderInfo() {
   if (el.createYourName) el.createYourName.value = state.info.deviceName;
   if (el.joinYourName) el.joinYourName.value = state.info.deviceName;
 
+  const primaryIp = state.info.localIPs && state.info.localIPs[0] ? state.info.localIPs[0] : window.location.hostname;
+  const port = state.info.httpsPort || 47811;
+  if (el.netLocalIp) el.netLocalIp.textContent = `${primaryIp}:${port}`;
+
   renderPeers(state.info.peers || []);
 }
 
@@ -394,8 +487,8 @@ function renderPeers(peers) {
   if (peers.length === 0) {
     el.peersListContainer.innerHTML = `
       <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 16px; text-align: center; color: var(--text-muted); font-size: 0.85rem;">
-        No other phones detected on this Wi-Fi yet.<br>
-        Make sure your friends have Splitwise P2P open on this Wi-Fi.
+        Scanning for nearby devices via Quick Share & Wi-Fi...<br>
+        Make sure the other phone has Splitwise P2P open!
       </div>
     `;
     return;
@@ -409,12 +502,12 @@ function renderPeers(peers) {
         <div class="group-avatar" style="background: linear-gradient(135deg, var(--cyan), var(--primary));">📱</div>
         <div>
           <div class="group-name">${escapeHtml(p.name)}</div>
-          <div class="group-meta">${p.host}:${p.port}</div>
+          <div class="group-meta">${escapeHtml(p.type || 'P2P Mesh')} • ${p.host ? p.host + ':' + p.port : 'Nearby'}</div>
         </div>
       </div>
       <div class="status-pill">
         <div class="status-dot online"></div>
-        <span>Synced</span>
+        <span>${p.connected !== false ? 'Connected' : 'Nearby'}</span>
       </div>
     </div>
   `
@@ -423,8 +516,9 @@ function renderPeers(peers) {
 }
 
 // -------------------------------------------------------------
-// 6. Groups & Balances
+// 7. Groups & Balance Overview (INR / ₹)
 // -------------------------------------------------------------
+
 async function refreshData() {
   await loadInfo();
   const groups = await fetchApi('/api/groups');
@@ -450,8 +544,11 @@ function renderGroups() {
       <div class="empty-state">
         <div class="empty-state-icon">👥</div>
         <h3>No groups yet</h3>
-        <p>Create a group with your friends or join an existing one to start splitting expenses offline.</p>
-        <button class="btn btn-primary" onclick="openModal('modal-create-group')">Create a Group</button>
+        <p>Create a group with your friends, join one, or import an existing Splitwise CSV export.</p>
+        <div style="display: flex; gap: 10px; justify-content: center; margin-top: 10px;">
+          <button class="btn btn-primary" onclick="openModal('modal-create-group')">Create a Group</button>
+          <button class="btn btn-secondary" onclick="openModal('modal-import-csv')">📥 Import export.csv</button>
+        </div>
       </div>
     `;
     updateHeroBalance(0, 0);
@@ -485,14 +582,14 @@ function renderGroups() {
     } else {
       balanceHtml = `
         <div class="group-balance-status">settled</div>
-        <div class="group-balance-amount" style="color: var(--text-dim);">$0.00</div>
+        <div class="group-balance-amount" style="color: var(--text-dim);">₹0.00</div>
       `;
     }
 
     html += `
       <div class="group-card" onclick="openGroupDetail('${g.id}')">
         <div class="group-info">
-          <div class="group-avatar">${escapeHtml(g.name[0] || 'G').toUpperCase()}</div>
+          <div class="group-avatar">${escapeHtml((g.name || 'G')[0]).toUpperCase()}</div>
           <div>
             <div class="group-name">${escapeHtml(g.name)}</div>
             <div class="group-meta">${g.members ? g.members.length : 0} members • ${g.expenseCount || 0} expenses</div>
@@ -520,22 +617,32 @@ function updateHeroBalance(totalOwed, totalOwe) {
     el.heroBalance.textContent = `-${formatMoney(net)}`;
   } else {
     el.heroBalance.className = 'hero-balance zero';
-    el.heroBalance.textContent = '$0.00';
+    el.heroBalance.textContent = '₹0.00';
   }
 }
 
 // -------------------------------------------------------------
-// 7. Group Detail View
+// 8. Group Detail View (Categories, Dates, Filters, Balances)
 // -------------------------------------------------------------
+
 async function openGroupDetail(groupId) {
   state.activeGroupId = groupId;
+  state.categoryFilter = 'ALL';
+  state.searchQuery = '';
+  if (el.expenseSearchInput) el.expenseSearchInput.value = '';
+
+  document.querySelectorAll('.filter-chip').forEach((c) => {
+    if (c.getAttribute('data-cat') === 'ALL') c.classList.add('active');
+    else c.classList.remove('active');
+  });
+
   switchView('view-group-detail');
   await loadGroupDetail(groupId);
 }
 
 async function loadGroupDetail(groupId, showLoader = true) {
   if (showLoader) {
-    el.expensesListContainer.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-muted);">Loading group data...</div>';
+    el.expensesListContainer.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-muted);">Loading group ledger...</div>';
   }
 
   const data = await fetchApi(`/api/groups/${groupId}`);
@@ -585,18 +692,35 @@ function renderGroupDetail() {
   renderExpensesList(data.expenses || [], data.members || []);
   renderBalancesAndSettlements(data.balances || {}, data.settlements || [], data.members || []);
   renderMembersList(data.members || [], data.group.id);
+  renderGroupQrCode(data.group);
 }
 
 function renderExpensesList(expenses, members) {
   const memberMap = Object.fromEntries(members.map((m) => [m.id, m.name]));
-  const activeExpenses = expenses.filter((e) => !e.deleted).reverse();
+  let activeExpenses = expenses.filter((e) => !e.deleted);
+
+  // Category filter
+  if (state.categoryFilter !== 'ALL') {
+    activeExpenses = activeExpenses.filter((e) => (e.category || 'General').toLowerCase() === state.categoryFilter.toLowerCase());
+  }
+
+  // Search filter
+  if (state.searchQuery.trim().length > 0) {
+    const q = state.searchQuery.toLowerCase();
+    activeExpenses = activeExpenses.filter((e) => {
+      const payerName = (memberMap[e.paid_by] || '').toLowerCase();
+      const desc = (e.description || '').toLowerCase();
+      const cat = (e.category || '').toLowerCase();
+      return desc.includes(q) || payerName.includes(q) || cat.includes(q);
+    });
+  }
 
   if (activeExpenses.length === 0) {
     el.expensesListContainer.innerHTML = `
       <div class="empty-state">
         <div class="empty-state-icon">🧾</div>
-        <h3>No expenses yet</h3>
-        <p>Tap the + button below to add your first expense.</p>
+        <h3>No matching expenses</h3>
+        <p>Tap + to record an expense or clear filters.</p>
       </div>
     `;
     return;
@@ -605,8 +729,9 @@ function renderExpensesList(expenses, members) {
   el.expensesListContainer.innerHTML = activeExpenses
     .map((e) => {
       const payerName = memberMap[e.paid_by] || 'Someone';
-      const isSettlement = e.description.startsWith('Payment:');
-      const icon = isSettlement ? '🤝' : '🍔';
+      const cat = e.category || (e.description.startsWith('Payment:') ? 'Payment' : 'General');
+      const icon = CATEGORY_ICONS[cat] || '🧾';
+      const formattedDate = formatDate(e.date);
 
       return `
       <div class="expense-item">
@@ -614,7 +739,11 @@ function renderExpensesList(expenses, members) {
           <div class="expense-icon">${icon}</div>
           <div>
             <div class="expense-title">${escapeHtml(e.description)}</div>
-            <div class="expense-sub">${payerName} paid ${formatMoney(e.amount)}</div>
+            <div class="expense-sub">
+              ${escapeHtml(payerName)} paid ${formatMoney(e.amount)}
+              ${formattedDate ? ` • <span class="expense-date">${formattedDate}</span>` : ''}
+              <span class="cat-badge">${icon} ${escapeHtml(cat)}</span>
+            </div>
           </div>
         </div>
         <div class="expense-right">
@@ -630,6 +759,7 @@ function renderExpensesList(expenses, members) {
 function renderBalancesAndSettlements(balances, settlements, members) {
   const memberMap = Object.fromEntries(members.map((m) => [m.id, m.name]));
 
+  // Settlements
   if (!settlements || settlements.length === 0) {
     el.settlementsListContainer.innerHTML = `
       <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: var(--radius-sm); padding: 14px; text-align: center; color: var(--primary); font-weight: 600; font-size: 0.9rem;">
@@ -650,7 +780,7 @@ function renderBalancesAndSettlements(balances, settlements, members) {
           </div>
           <div style="display: flex; align-items: center; gap: 10px;">
             <span style="font-weight: 700; color: var(--cyan);">${formatMoney(s.amount)}</span>
-            <button class="btn btn-primary btn-sm" onclick="promptSettleUp('${s.from}', '${s.to}', ${s.amount}, '${escapeHtml(fromName)}', '${escapeHtml(toName)}')">Settle</button>
+            <button class="btn btn-primary btn-sm" onclick="promptSettleUp('${s.from}', '${s.to}', ${s.amount}, '${escapeHtml(fromName)}', '${escapeHtml(toName)}')">Settle ₹</button>
           </div>
         </div>
       `;
@@ -658,6 +788,7 @@ function renderBalancesAndSettlements(balances, settlements, members) {
       .join('');
   }
 
+  // Individual Balances
   el.balancesListContainer.innerHTML = Object.entries(balances)
     .map(([memberId, amount]) => {
       const name = memberMap[memberId] || memberId;
@@ -672,9 +803,10 @@ function renderBalancesAndSettlements(balances, settlements, members) {
       }
 
       return `
-      <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 8px;">
-        <span style="font-weight: 600;">${escapeHtml(name)}</span>
-        <span style="font-weight: 700; color: ${color};">${text}</span>
+      <div class="member-item">
+        <div class="member-avatar">${escapeHtml((name || 'M')[0]).toUpperCase()}</div>
+        <div class="member-name">${escapeHtml(name)}</div>
+        <div style="font-weight: 600; color: ${color}; font-size: 0.9rem;">${text}</div>
       </div>
     `;
     })
@@ -682,44 +814,39 @@ function renderBalancesAndSettlements(balances, settlements, members) {
 }
 
 function renderMembersList(members, groupId) {
-  if (el.membersListContainer) {
-    el.membersListContainer.innerHTML = members
-      .map(
-        (m) => `
-      <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 8px;">
-        <div>
-          <div style="font-weight: 600;">${escapeHtml(m.name)}</div>
-          <div style="font-size: 0.75rem; color: var(--text-dim); font-family: monospace;">Device: ${m.device_id}</div>
-        </div>
-        <span style="font-size: 0.75rem; color: var(--text-muted);">${new Date(m.joined_at).toLocaleDateString()}</span>
+  el.membersListContainer.innerHTML = members
+    .map(
+      (m) => `
+    <div class="member-item">
+      <div class="member-avatar">${escapeHtml((m.name || 'M')[0]).toUpperCase()}</div>
+      <div>
+        <div class="member-name">${escapeHtml(m.name)}</div>
+        <div style="font-size: 0.75rem; color: var(--text-dim); font-family: monospace;">Device: ${m.device_id.slice(0, 8)}</div>
       </div>
-    `
-      )
-      .join('');
+    </div>
+  `
+    )
+    .join('');
+}
+
+function renderGroupQrCode(group) {
+  const primaryIp = state.info && state.info.localIPs ? state.info.localIPs[0] : window.location.hostname;
+  const port = state.info && state.info.httpsPort ? state.info.httpsPort : 47811;
+  const qrData = `splitwise://join?gid=${group.id}&name=${encodeURIComponent(group.name)}&ip=${primaryIp}&port=${port}`;
+
+  if (window.toSvg) {
+    const svg = window.toSvg(qrData);
+    if (el.groupQrContainer) el.groupQrContainer.innerHTML = svg;
+    if (el.modalQrDisplay) el.modalQrDisplay.innerHTML = svg;
+  }
+  if (el.modalQrSubtext) {
+    el.modalQrSubtext.textContent = `IP: ${primaryIp}:${port} • ID: ${group.id.slice(0, 8)}`;
   }
 }
 
 // -------------------------------------------------------------
-// 7. Modals & Actions
+// 9. Add Expense & Custom Share Splitting
 // -------------------------------------------------------------
-function openModal(id) {
-  const modal = document.getElementById(id);
-  if (modal) modal.classList.add('open');
-}
-
-function closeModal(id) {
-  const modal = document.getElementById(id);
-  if (modal) modal.classList.remove('open');
-}
-
-document.querySelectorAll('.btn-close, .modal-overlay').forEach((elem) => {
-  elem.addEventListener('click', (e) => {
-    if (e.target === elem || elem.classList.contains('btn-close')) {
-      const modal = elem.closest('.modal-overlay');
-      if (modal) modal.classList.remove('open');
-    }
-  });
-});
 
 function setupAddExpenseModal() {
   const data = state.currentGroupData;
@@ -727,6 +854,10 @@ function setupAddExpenseModal() {
 
   el.expDesc.value = '';
   el.expAmount.value = '';
+  el.expDate.value = new Date().toISOString().split('T')[0];
+  el.expCategory.value = 'General';
+  state.splitMode = 'EQUAL';
+  updateSplitModeUI();
 
   el.expPaidBy.innerHTML = data.members
     .map((m) => `<option value="${m.id}">${escapeHtml(m.name)}</option>`)
@@ -751,27 +882,81 @@ function setupAddExpenseModal() {
   openModal('modal-add-expense');
 }
 
-if (el.fabAddExpense) el.fabAddExpense.addEventListener('click', setupAddExpenseModal);
+function updateSplitModeUI() {
+  if (state.splitMode === 'EQUAL') {
+    el.btnSplitEqual.classList.add('active');
+    el.btnSplitCustom.classList.remove('active');
+    el.expSplitCheckboxes.style.display = 'grid';
+    el.expCustomSplitContainer.style.display = 'none';
+  } else {
+    el.btnSplitEqual.classList.remove('active');
+    el.btnSplitCustom.classList.add('active');
+    el.expSplitCheckboxes.style.display = 'none';
+    el.expCustomSplitContainer.style.display = 'block';
+
+    const members = (state.currentGroupData && state.currentGroupData.members) || [];
+    const total = parseFloat(el.expAmount.value) || 0;
+    const shareEach = members.length > 0 ? (total / members.length).toFixed(2) : 0;
+
+    el.expCustomSplitContainer.innerHTML = members
+      .map(
+        (m) => `
+      <div class="custom-split-row">
+        <span class="custom-split-name">${escapeHtml(m.name)}</span>
+        <input type="number" step="0.01" class="custom-split-input" id="custom-share-${m.id}" value="${shareEach}">
+      </div>
+    `
+      )
+      .join('');
+  }
+}
+
+el.btnSplitEqual.addEventListener('click', () => {
+  state.splitMode = 'EQUAL';
+  updateSplitModeUI();
+});
+
+el.btnSplitCustom.addEventListener('click', () => {
+  state.splitMode = 'CUSTOM';
+  updateSplitModeUI();
+});
+
+el.expAmount.addEventListener('input', () => {
+  if (state.splitMode === 'CUSTOM') updateSplitModeUI();
+});
+
+el.fabAddExpense.addEventListener('click', setupAddExpenseModal);
 
 el.formAddExpense.addEventListener('submit', async (e) => {
   e.preventDefault();
   const description = el.expDesc.value.trim();
   const amount = parseFloat(el.expAmount.value);
+  const date = el.expDate.value;
+  const category = el.expCategory.value;
   const paidBy = el.expPaidBy.value;
 
-  const checkboxes = document.querySelectorAll('input[name="splitMember"]:checked');
-  const splitBetween = Array.from(checkboxes).map((cb) => cb.value);
-
-  if (splitBetween.length === 0) {
-    alert('Please select at least one person to split with.');
-    return;
+  let splitBetween = [];
+  if (state.splitMode === 'EQUAL') {
+    const checkboxes = document.querySelectorAll('input[name="splitMember"]:checked');
+    splitBetween = Array.from(checkboxes).map((cb) => cb.value);
+    if (splitBetween.length === 0) {
+      alert('Please select at least one person to split with.');
+      return;
+    }
+  } else {
+    const members = (state.currentGroupData && state.currentGroupData.members) || [];
+    splitBetween = members.map((m) => {
+      const inp = document.getElementById(`custom-share-${m.id}`);
+      const shareVal = parseFloat(inp ? inp.value : 0) || 0;
+      return { memberId: m.id, share: shareVal };
+    });
   }
 
   closeModal('modal-add-expense');
 
   const res = await fetchApi(`/api/groups/${state.activeGroupId}/expenses`, {
     method: 'POST',
-    body: JSON.stringify({ description, amount, paidBy, splitBetween }),
+    body: JSON.stringify({ description, amount, paidBy, splitBetween, category, date }),
   });
 
   if (res) {
@@ -781,9 +966,16 @@ el.formAddExpense.addEventListener('submit', async (e) => {
   }
 });
 
+// Settle Up Handler with UPI Link
 function promptSettleUp(payerId, receiverId, amount, payerName, receiverName) {
   state.pendingSettlement = { payerId, receiverId, amount };
   el.settleSummaryText.textContent = `${payerName} pays ${formatMoney(amount)} to ${receiverName}`;
+
+  if (el.btnPayUpi) {
+    el.btnPayUpi.href = `upi://pay?pn=${encodeURIComponent(receiverName)}&am=${amount.toFixed(2)}&cu=INR&tn=${encodeURIComponent('Splitwise P2P Settlement')}`;
+    el.btnPayUpi.style.display = 'flex';
+  }
+
   openModal('modal-settle-up');
 }
 
@@ -802,7 +994,7 @@ el.btnConfirmSettle.addEventListener('click', async () => {
   });
 
   if (res) {
-    showToast('Settlement recorded');
+    showToast('Settlement recorded in ledger');
     await loadGroupDetail(state.activeGroupId, false);
     refreshData();
   }
@@ -819,6 +1011,176 @@ async function deleteExpense(expenseId) {
     refreshData();
   }
 }
+
+// -------------------------------------------------------------
+// 10. Splitwise CSV Import & Export
+// -------------------------------------------------------------
+
+el.btnImportCsvHome.addEventListener('click', () => openModal('modal-import-csv'));
+el.btnImportCsvDetail.addEventListener('click', () => {
+  if (state.currentGroupData && state.currentGroupData.group) {
+    el.csvGroupName.value = state.currentGroupData.group.name;
+  }
+  openModal('modal-import-csv');
+});
+
+// 1-Tap Quick Import from downloads/export.csv
+el.btnQuickImportDownloads.addEventListener('click', async () => {
+  closeModal('modal-import-csv');
+  showToast('Importing export.csv...');
+
+  const res = await fetchApi('/api/groups/import-csv', {
+    method: 'POST',
+    body: JSON.stringify({
+      useLocalFile: true,
+      groupId: state.activeGroupId || null,
+      groupName: el.csvGroupName.value || 'Flat Expenses',
+    }),
+  });
+
+  if (res && res.success) {
+    showToast(`Successfully imported ${res.importedCount} expenses!`);
+    await refreshData();
+    if (res.groupId) openGroupDetail(res.groupId);
+  } else {
+    alert('Import failed: ' + ((res && res.error) || 'Check that export.csv exists in Downloads'));
+  }
+});
+
+// Manual File Picker Import
+el.btnRunCsvImport.addEventListener('click', async () => {
+  const file = el.csvFileInput.files[0];
+  if (!file) {
+    alert('Please select a .csv file to import.');
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const csv = e.target.result;
+    closeModal('modal-import-csv');
+    showToast('Processing CSV...');
+
+    const res = await fetchApi('/api/groups/import-csv', {
+      method: 'POST',
+      body: JSON.stringify({
+        csv,
+        groupId: state.activeGroupId || null,
+        groupName: el.csvGroupName.value || file.name.replace('.csv', ''),
+      }),
+    });
+
+    if (res && res.success) {
+      showToast(`Imported ${res.importedCount} transactions!`);
+      await refreshData();
+      if (res.groupId) openGroupDetail(res.groupId);
+    } else {
+      alert('CSV import error: ' + ((res && res.error) || 'Invalid format'));
+    }
+  };
+  reader.readAsText(file);
+});
+
+// Export CSV
+el.btnExportCsv.addEventListener('click', async () => {
+  if (!state.activeGroupId) return;
+  showToast('Generating Splitwise CSV...');
+
+  const csv = await fetchApi(`/api/groups/${state.activeGroupId}/export-csv`);
+  if (csv && typeof csv === 'string') {
+    const groupName = (state.currentGroupData && state.currentGroupData.group && state.currentGroupData.group.name) || 'group';
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `splitwise_${groupName.toLowerCase().replace(/[^a-z0-9]/g, '_')}_export.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast('CSV downloaded');
+  } else {
+    alert('Export failed.');
+  }
+});
+
+// -------------------------------------------------------------
+// 11. In-App QR Scanner & QR Code Dialogs
+// -------------------------------------------------------------
+
+function triggerQrScan() {
+  if (isNativeApp && window.AndroidBridge && window.AndroidBridge.scanQrCode) {
+    window.AndroidBridge.scanQrCode();
+  } else {
+    // Web camera / manual fallback
+    const id = prompt('Enter Group ID to join (or scan using Android camera):');
+    if (id && id.trim()) {
+      fetchApi('/api/groups/join', {
+        method: 'POST',
+        body: JSON.stringify({ groupId: id.trim() }),
+      }).then((res) => {
+        if (res && res.success) {
+          refreshData();
+          openGroupDetail(id.trim());
+        }
+      });
+    }
+  }
+}
+
+el.btnHeaderScanQr.addEventListener('click', triggerQrScan);
+el.btnScanQrJoin.addEventListener('click', () => {
+  closeModal('modal-join-group');
+  triggerQrScan();
+});
+
+el.btnShowGroupQr.addEventListener('click', () => {
+  if (state.currentGroupData && state.currentGroupData.group) {
+    renderGroupQrCode(state.currentGroupData.group);
+    openModal('modal-group-qr');
+  }
+});
+
+el.btnModalCopyGid.addEventListener('click', () => {
+  if (state.activeGroupId) {
+    navigator.clipboard.writeText(state.activeGroupId);
+    showToast('Group ID copied');
+  }
+});
+
+el.btnCopyGroupId.addEventListener('click', () => {
+  if (state.activeGroupId) {
+    navigator.clipboard.writeText(state.activeGroupId);
+    showToast('Group ID copied');
+  }
+});
+
+// -------------------------------------------------------------
+// 12. Search & Category Filter Chips
+// -------------------------------------------------------------
+
+if (el.expenseSearchInput) {
+  el.expenseSearchInput.addEventListener('input', (e) => {
+    state.searchQuery = e.target.value;
+    if (state.currentGroupData) {
+      renderExpensesList(state.currentGroupData.expenses || [], state.currentGroupData.members || []);
+    }
+  });
+}
+
+document.querySelectorAll('.filter-chip').forEach((chip) => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.filter-chip').forEach((c) => c.classList.remove('active'));
+    chip.classList.add('active');
+    state.categoryFilter = chip.getAttribute('data-cat') || 'ALL';
+    if (state.currentGroupData) {
+      renderExpensesList(state.currentGroupData.expenses || [], state.currentGroupData.members || []);
+    }
+  });
+});
+
+// -------------------------------------------------------------
+// 13. Create & Join Group Forms
+// -------------------------------------------------------------
 
 el.formCreateGroup.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -873,27 +1235,7 @@ el.formManualPeer.addEventListener('submit', async (e) => {
   }
 });
 
-// -------------------------------------------------------------
-// 8. Event Listeners & Navigation
-// -------------------------------------------------------------
-el.brandHome.addEventListener('click', () => switchView('view-groups'));
-if (el.statusPill) el.statusPill.addEventListener('click', () => switchView('view-network'));
-if (el.btnCertHeader) el.btnCertHeader.addEventListener('click', () => switchView('view-cert'));
-el.btnBackToGroups.addEventListener('click', () => switchView('view-groups'));
-
-el.btnCreateGroupModal.addEventListener('click', () => openModal('modal-create-group'));
-if (el.btnCreateFirstGroup) el.btnCreateFirstGroup.addEventListener('click', () => openModal('modal-create-group'));
-el.btnJoinGroupModal.addEventListener('click', () => openModal('modal-join-group'));
-el.btnManualPeerModal.addEventListener('click', () => openModal('modal-manual-peer'));
-
-el.btnCopyGroupId.addEventListener('click', () => {
-  const id = el.detailGroupId.getAttribute('data-id');
-  if (id) {
-    navigator.clipboard.writeText(id);
-    showToast('Group ID copied to clipboard');
-  }
-});
-
+// Detail Tabs
 document.querySelectorAll('.tabs .tab').forEach((tab) => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.tabs .tab').forEach((t) => t.classList.remove('active'));
@@ -906,6 +1248,7 @@ document.querySelectorAll('.tabs .tab').forEach((tab) => {
   });
 });
 
+// Bottom Navigation items
 document.querySelectorAll('.bottom-nav .nav-item').forEach((item) => {
   item.addEventListener('click', () => {
     const viewId = item.getAttribute('data-view');
@@ -913,152 +1256,18 @@ document.querySelectorAll('.bottom-nav .nav-item').forEach((item) => {
   });
 });
 
-// -------------------------------------------------------------
-// 9. MongoDB Cloud Addon Logic
-// -------------------------------------------------------------
-async function loadMongoStatus() {
-  const status = await fetchApi('/api/addon/mongo');
-  if (status) {
-    renderMongoStatus(status);
-  }
-}
+// Header navigation
+el.brandHome.addEventListener('click', () => switchView('view-groups'));
+el.statusPill.addEventListener('click', () => switchView('view-network'));
+el.btnCertHeader.addEventListener('click', () => switchView('view-cert'));
+el.btnBackToGroups.addEventListener('click', () => switchView('view-groups'));
+el.btnCreateGroupModal.addEventListener('click', () => openModal('modal-create-group'));
+if (el.btnCreateFirstGroup) el.btnCreateFirstGroup.addEventListener('click', () => openModal('modal-create-group'));
+el.btnJoinGroupModal.addEventListener('click', () => openModal('modal-join-group'));
+el.btnManualPeerModal.addEventListener('click', () => openModal('modal-manual-peer'));
 
-function renderMongoStatus(status) {
-  if (!el.mongoStatusBadge) return;
-
-  if (status.enabled) {
-    el.mongoStatusBadge.textContent = 'Status: Cloud + Local Dual Active';
-    el.mongoStatusBadge.style.color = '#00ed64';
-    if (el.btnSyncMongoNow) el.btnSyncMongoNow.style.display = 'inline-block';
-    if (el.formMongoAddon) el.formMongoAddon.style.display = 'block';
-    if (el.mongoSyncInfo) el.mongoSyncInfo.style.display = 'block';
-
-    if (el.modeBtnLocal) {
-      el.modeBtnLocal.style.borderColor = 'var(--border)';
-      el.modeBtnLocal.style.background = 'var(--bg-card)';
-    }
-    if (el.modeBtnMongo) {
-      el.modeBtnMongo.style.borderColor = 'var(--primary)';
-      el.modeBtnMongo.style.background = 'rgba(16, 185, 129, 0.15)';
-    }
-  } else {
-    el.mongoStatusBadge.textContent = 'Status: 100% Local Only (Offline Mesh)';
-    el.mongoStatusBadge.style.color = 'var(--text-muted)';
-    if (el.btnSyncMongoNow) el.btnSyncMongoNow.style.display = 'none';
-    if (el.formMongoAddon) el.formMongoAddon.style.display = 'none';
-    if (el.mongoSyncInfo) el.mongoSyncInfo.style.display = 'none';
-
-    if (el.modeBtnLocal) {
-      el.modeBtnLocal.style.borderColor = 'var(--primary)';
-      el.modeBtnLocal.style.background = 'rgba(16, 185, 129, 0.15)';
-    }
-    if (el.modeBtnMongo) {
-      el.modeBtnMongo.style.borderColor = 'var(--border)';
-      el.modeBtnMongo.style.background = 'var(--bg-card)';
-    }
-  }
-
-  if (status.uri && el.mongoUri) {
-    el.mongoUri.value = status.uri;
-  }
-  if (status.dbName && el.mongoDbname) {
-    el.mongoDbname.value = status.dbName;
-  }
-  if (status.lastSyncTime && el.mongoLastSyncTime) {
-    el.mongoLastSyncTime.textContent = new Date(status.lastSyncTime).toLocaleTimeString();
-  }
-}
-
-if (el.modeBtnLocal) {
-  el.modeBtnLocal.addEventListener('click', async () => {
-    await fetchApi('/api/addon/mongo', { method: 'DELETE' });
-    showToast('Switched to 100% Local Mode');
-    loadMongoStatus();
-  });
-}
-
-if (el.modeBtnMongo) {
-  el.modeBtnMongo.addEventListener('click', () => {
-    if (el.formMongoAddon) el.formMongoAddon.style.display = 'block';
-    if (el.modeBtnMongo) {
-      el.modeBtnMongo.style.borderColor = 'var(--primary)';
-      el.modeBtnMongo.style.background = 'rgba(16, 185, 129, 0.15)';
-    }
-    if (el.modeBtnLocal) {
-      el.modeBtnLocal.style.borderColor = 'var(--border)';
-      el.modeBtnLocal.style.background = 'var(--bg-card)';
-    }
-  });
-}
-
-if (el.formMongoAddon) {
-  el.formMongoAddon.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const uri = el.mongoUri.value.trim();
-    const dbName = el.mongoDbname.value.trim();
-
-    if (el.btnSaveMongo) {
-      el.btnSaveMongo.textContent = 'Connecting...';
-      el.btnSaveMongo.disabled = true;
-    }
-
-    const res = await fetchApi('/api/addon/mongo', {
-      method: 'POST',
-      body: JSON.stringify({ enabled: true, uri, dbName }),
-    });
-
-    if (el.btnSaveMongo) {
-      el.btnSaveMongo.textContent = 'Save & Connect';
-      el.btnSaveMongo.disabled = false;
-    }
-
-    if (res && res.success) {
-      showToast('Connected to MongoDB! Dual storage active.');
-      loadMongoStatus();
-      refreshData();
-    } else {
-      alert('MongoDB connection failed: ' + ((res && res.error) || 'Check URI or network'));
-    }
-  });
-}
-
-if (el.btnDisableMongo) {
-  el.btnDisableMongo.addEventListener('click', async () => {
-    await fetchApi('/api/addon/mongo', { method: 'DELETE' });
-    showToast('MongoDB addon disabled');
-    loadMongoStatus();
-  });
-}
-
-if (el.btnSyncMongoNow) {
-  el.btnSyncMongoNow.addEventListener('click', async () => {
-    el.btnSyncMongoNow.textContent = 'Syncing...';
-    const res = await fetchApi('/api/addon/mongo/sync', { method: 'POST' });
-    el.btnSyncMongoNow.textContent = '☁️ Sync Now';
-    if (res && res.lastSyncTime) {
-      showToast(`Synced ${res.synced || 0} updates with MongoDB`);
-      loadMongoStatus();
-      refreshData();
-    }
-  });
-}
-
-function escapeHtml(str) {
-  return String(str || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
-
-// Start app
-if (isNativeApp) {
-  if (el.statusDot) el.statusDot.className = 'status-dot online';
-  if (el.statusText) el.statusText.textContent = 'Native Wi-Fi Mesh';
-  if (el.installBanner) el.installBanner.style.display = 'none';
-} else {
+// Initialize on Load
+window.addEventListener('DOMContentLoaded', () => {
   connectWebSocket();
-}
-refreshData();
-loadMongoStatus();
+  refreshData();
+});
