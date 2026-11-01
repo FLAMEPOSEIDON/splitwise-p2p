@@ -1886,10 +1886,14 @@ function openUpdateModal() {
 function performAppUpdate() {
   if (!latestUpdateData) return;
 
-  localStorage.setItem('splitwise_installed_commit', latestUpdateData.sha);
+  const targetSha = latestUpdateData.sha;
+  localStorage.setItem('splitwise_installed_commit', targetSha);
   closeModal('modal-update-available');
 
-  if (isNativeApp && window.AndroidBridge && typeof window.AndroidBridge.installApkUpdate === 'function') {
+  if (isNativeApp && window.AndroidBridge && typeof window.AndroidBridge.performOtaUpdate === 'function') {
+    showToast('⚡ Updating app directly over the air...');
+    window.AndroidBridge.performOtaUpdate(targetSha);
+  } else if (isNativeApp && window.AndroidBridge && typeof window.AndroidBridge.installApkUpdate === 'function') {
     window.AndroidBridge.installApkUpdate(latestUpdateData.downloadUrl);
     showToast('Starting APK download & update...');
   } else {

@@ -18,6 +18,7 @@ import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -33,7 +34,10 @@ import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.FileReader;
+import java.io.InputStream;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -173,13 +177,54 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                 }
                 return true;
             }
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                if (request != null && request.getUrl() != null) {
+                    WebResourceResponse ota = getOtaResource(request.getUrl().toString());
+                    if (ota != null) return ota;
+                }
+                return super.shouldInterceptRequest(view, request);
+            }
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, String url) {
+                if (url != null) {
+                    WebResourceResponse ota = getOtaResource(url);
+                    if (ota != null) return ota;
+                }
+                return super.shouldInterceptRequest(view, url);
+            }
         });
 
         // Attach Android Native Bridge to JavaScript
         webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
 
-        // Load bundled native app assets
+        // Load bundled native app assets (or cached OTA updates if present)
         webView.loadUrl("file:///android_asset/www/index.html");
+    }
+
+    private WebResourceResponse getOtaResource(String url) {
+        if (url == null || !url.startsWith("file:///android_asset/www/")) {
+            return null;
+        }
+        String filename = url.substring("file:///android_asset/www/".length());
+        if (filename.contains("?")) filename = filename.substring(0, filename.indexOf("?"));
+        if (filename.contains("#")) filename = filename.substring(0, filename.indexOf("#"));
+
+        File otaFile = new File(new File(getFilesDir(), "ota_www"), filename);
+        if (otaFile.exists() && otaFile.isFile() && otaFile.length() > 0) {
+            try {
+                String mimeType = "text/plain";
+                if (filename.endsWith(".html")) mimeType = "text/html";
+                else if (filename.endsWith(".js")) mimeType = "application/javascript";
+                else if (filename.endsWith(".css")) mimeType = "text/css";
+                else if (filename.endsWith(".svg")) mimeType = "image/svg+xml";
+                else if (filename.endsWith(".json")) mimeType = "application/json";
+                return new WebResourceResponse(mimeType, "UTF-8", new FileInputStream(otaFile));
+            } catch (Exception ignored) {}
+        }
+        return null;
     }
 
     private void checkAndRequestPermissions() {
@@ -601,6 +646,70 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
             } catch (Exception e) {
                 return "1.2.0";
             }
+        }
+
+        @JavascriptInterface
+        public void performOtaUpdate(String commitSha) {
+            new Thread(() -> {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "⚡ Updating directly over-the-air...", Toast.LENGTH_SHORT).show());
+                try {
+                    String baseUrl = "https://raw.githubusercontent.com/FLAMEPOSEIDON/splitwise-p2p/main/android-app/app/src/main/assets/www/";
+                    String[] files = {"index.html", "styles.css", "app.js", "qrcode.js"};
+
+                    File otaDir = new File(getFilesDir(), "ota_www");
+                    if (!otaDir.exists()) otaDir.mkdirs();
+
+                    File tempDir = new File(getFilesDir(), "ota_temp");
+                    if (!tempDir.exists()) tempDir.mkdirs();
+
+                    for (String fName : files) {
+                        java.net.URL u = new java.net.URL(baseUrl + fName + "?v=" + System.currentTimeMillis());
+                        java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection();
+                        conn.setConnectTimeout(8000);
+                        conn.setReadTimeout(8000);
+                        conn.setRequestProperty("User-Agent", "SplitwiseP2P-OTA");
+                        if (conn.getResponseCode() != 200) {
+                            throw new Exception("HTTP " + conn.getResponseCode() + " for " + fName);
+                        }
+                        File tmp = new File(tempDir, fName);
+                        try (InputStream in = conn.getInputStream();
+                             FileOutputStream out = new FileOutputStream(tmp)) {
+                            byte[] buffer = new byte[8192];
+                            int read;
+                            while ((read = in.read(buffer)) != -1) {
+                                out.write(buffer, 0, read);
+                            }
+                        }
+                    }
+
+                    // Move to ota_www atomically
+                    for (String fName : files) {
+                        File tmp = new File(tempDir, fName);
+                        File target = new File(otaDir, fName);
+                        if (target.exists()) target.delete();
+                        tmp.renameTo(target);
+                    }
+
+                    if (commitSha != null && !commitSha.isEmpty()) {
+                        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                                .edit()
+                                .putString("splitwise_installed_commit", commitSha)
+                                .apply();
+                    }
+
+                    runOnUiThread(() -> {
+                        Toast.makeText(MainActivity.this, "🎉 Update applied directly! Running newest version.", Toast.LENGTH_LONG).show();
+                        webView.clearCache(true);
+                        webView.reload();
+                    });
+                } catch (Exception e) {
+                    Log.e(TAG, "OTA update error: " + e.getMessage(), e);
+                    runOnUiThread(() -> {
+                        Toast.makeText(MainActivity.this, "Direct update failed: " + e.getMessage() + ". Opening APK download...", Toast.LENGTH_LONG).show();
+                        installApkUpdate("https://github.com/FLAMEPOSEIDON/splitwise-p2p/releases/latest/download/SplitwiseP2P.apk");
+                    });
+                }
+            }).start();
         }
 
         @JavascriptInterface
