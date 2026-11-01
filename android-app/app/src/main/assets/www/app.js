@@ -26,6 +26,8 @@ const state = {
   categoryFilter: 'ALL',
   searchQuery: '',
   splitMode: 'EQUAL', // 'EQUAL' or 'CUSTOM'
+  activeActivityGroupFilter: 'ALL',
+  latestUpdateData: null,
 };
 
 const CATEGORY_ICONS = {
@@ -51,6 +53,7 @@ const el = {
   btnInstallPwa: document.getElementById('btn-install-pwa'),
   btnCertHeader: document.getElementById('btn-cert-header'),
   btnHeaderScanQr: document.getElementById('btn-header-scan-qr'),
+  btnHeaderUpdate: document.getElementById('btn-header-update'),
 
   // First-Time Registration & Profile
   modalWelcomeRegister: document.getElementById('modal-welcome-register'),
@@ -73,10 +76,26 @@ const el = {
 
   // Views
   viewGroups: document.getElementById('view-groups'),
+  viewActivity: document.getElementById('view-activity'),
   viewGroupDetail: document.getElementById('view-group-detail'),
   viewNetwork: document.getElementById('view-network'),
   viewCert: document.getElementById('view-cert'),
   viewMongo: document.getElementById('view-mongo'),
+
+  // Activity Feed
+  activityListContainer: document.getElementById('activity-list-container'),
+  activityGroupFilterChips: document.getElementById('activity-group-filter-chips'),
+  activityBadge: document.getElementById('activity-badge'),
+
+  // Updates & GitHub
+  modalUpdateAvailable: document.getElementById('modal-update-available'),
+  updateModalTitle: document.getElementById('update-modal-title'),
+  updateModalDesc: document.getElementById('update-modal-desc'),
+  updateCommitMessage: document.getElementById('update-commit-message'),
+  updateCommitMeta: document.getElementById('update-commit-meta'),
+  btnPerformUpdate: document.getElementById('btn-perform-update'),
+  appVersionLabel: document.getElementById('app-version-label'),
+  updateStatusText: document.getElementById('update-status-text'),
 
   // Hero
   heroBalance: document.getElementById('hero-balance'),
@@ -292,11 +311,15 @@ window.addEventListener('click', (e) => {
 
 function switchView(viewId) {
   state.activeView = viewId;
-  const views = ['view-groups', 'view-group-detail', 'view-network', 'view-cert', 'view-mongo'];
+  const views = ['view-groups', 'view-activity', 'view-group-detail', 'view-network', 'view-cert', 'view-mongo'];
   views.forEach((v) => {
     const elem = document.getElementById(v);
     if (elem) elem.style.display = v === viewId ? 'block' : 'none';
   });
+
+  if (viewId === 'view-activity') {
+    loadActivityFeed();
+  }
 
   if (el.fabAddExpense) {
     el.fabAddExpense.style.display = viewId === 'view-group-detail' ? 'flex' : 'none';
@@ -320,6 +343,9 @@ if (isNativeApp) {
     refreshData();
     if (state.activeGroupId) {
       loadGroupDetail(state.activeGroupId, false);
+    }
+    if (state.activeView === 'view-activity') {
+      loadActivityFeed();
     }
     showToast('Database synced via Mesh');
   };
@@ -402,6 +428,23 @@ async function fetchApi(endpoint, options = {}) {
       if (matchExport && (!options.method || options.method === 'GET')) {
         return window.AndroidBridge.exportCsv(matchExport[1]);
       }
+      if (endpoint.startsWith('/api/activity')) {
+        const urlParams = new URLSearchParams(endpoint.includes('?') ? endpoint.split('?')[1] : '');
+        const gid = urlParams.get('groupId') || '';
+        return JSON.parse(window.AndroidBridge.getActivityFeed(gid) || '[]');
+      }
+      if (endpoint === '/api/version') {
+        const nativeVer = (typeof window.AndroidBridge.getAppVersion === 'function')
+          ? window.AndroidBridge.getAppVersion()
+          : '1.2.0';
+        return {
+          version: nativeVer,
+          repo: 'FLAMEPOSEIDON/splitwise-p2p',
+          branch: 'main',
+          downloadUrl: 'https://github.com/FLAMEPOSEIDON/splitwise-p2p/releases/latest/download/SplitwiseP2P.apk',
+          commitsApiUrl: 'https://api.github.com/repos/FLAMEPOSEIDON/splitwise-p2p/commits/main',
+        };
+      }
       if (endpoint === '/api/peers' && (!options.method || options.method === 'GET')) {
         const peers = JSON.parse(window.AndroidBridge.getPeers() || '[]');
         return { peers, connected: [] };
@@ -462,6 +505,7 @@ function connectWebSocket() {
         const msg = JSON.parse(event.data);
         refreshData();
         if (state.activeGroupId) loadGroupDetail(state.activeGroupId, false);
+        if (state.activeView === 'view-activity') loadActivityFeed();
         showToast('Database synced across Wi-Fi');
       } catch (_) {}
     };
@@ -1423,10 +1467,241 @@ safeOn(el.btnJoinGroupModal, 'click', () => openModal('modal-join-group'));
 safeOn(el.btnManualPeerModal, 'click', () => openModal('modal-manual-peer'));
 safeOn(el.btnImportCsvHome, 'click', () => openModal('modal-import-csv'));
 
+// -------------------------------------------------------------
+// 14. Activity Feed Logic
+// -------------------------------------------------------------
+let cachedActivities = [];
+
+async function loadActivityFeed() {
+  if (!el.activityListContainer) return;
+  el.activityListContainer.innerHTML = '<div style="text-align: center; padding: 30px; color: var(--text-muted);">Loading activity...</div>';
+
+  renderActivityGroupChips();
+
+  const gid = state.activeActivityGroupFilter === 'ALL' ? '' : state.activeActivityGroupFilter;
+  const endpoint = gid ? `/api/activity?groupId=${encodeURIComponent(gid)}` : '/api/activity';
+  const data = await fetchApi(endpoint);
+
+  if (Array.isArray(data)) {
+    cachedActivities = data;
+    renderActivityFeed(data);
+  } else {
+    el.activityListContainer.innerHTML = '<div style="text-align: center; padding: 30px; color: var(--text-muted);">No activity recorded yet.</div>';
+  }
+}
+
+function renderActivityGroupChips() {
+  if (!el.activityGroupFilterChips) return;
+  let html = `<div class="filter-chip ${state.activeActivityGroupFilter === 'ALL' ? 'active' : ''}" onclick="filterActivityByGroup('ALL')">All Groups</div>`;
+
+  for (const g of state.groups) {
+    const isActive = state.activeActivityGroupFilter === g.id;
+    html += `<div class="filter-chip ${isActive ? 'active' : ''}" onclick="filterActivityByGroup('${g.id}')">${escapeHtml(g.name)}</div>`;
+  }
+  el.activityGroupFilterChips.innerHTML = html;
+}
+
+function filterActivityByGroup(gid) {
+  state.activeActivityGroupFilter = gid;
+  renderActivityGroupChips();
+  loadActivityFeed();
+}
+
+function formatRelativeTime(dateStr) {
+  if (!dateStr) return '';
+  const now = Date.now();
+  const past = new Date(dateStr).getTime();
+  if (isNaN(past)) return dateStr;
+  const diffSec = Math.floor((now - past) / 1000);
+
+  if (diffSec < 60) return 'Just now';
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+  if (diffSec < 172800) return 'Yesterday';
+  if (diffSec < 604800) return `${Math.floor(diffSec / 86400)}d ago`;
+
+  const d = new Date(past);
+  return d.toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function renderActivityFeed(activities) {
+  if (!el.activityListContainer) return;
+
+  if (activities.length === 0) {
+    el.activityListContainer.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">📜</div>
+        <h3>No activity yet</h3>
+        <p>When expenses, payments, or group members are added or synced, they will appear here in chronological order.</p>
+      </div>
+    `;
+    return;
+  }
+
+  let html = '';
+  let lastDateHeader = '';
+
+  for (const act of activities) {
+    const d = act.timestamp ? new Date(act.timestamp) : new Date();
+    let dateHeader = 'Earlier';
+    if (!isNaN(d.getTime())) {
+      const today = new Date();
+      if (d.toDateString() === today.toDateString()) {
+        dateHeader = 'Today';
+      } else {
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        if (d.toDateString() === yesterday.toDateString()) {
+          dateHeader = 'Yesterday';
+        } else {
+          dateHeader = d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+        }
+      }
+    }
+
+    if (dateHeader !== lastDateHeader) {
+      html += `<div class="activity-date-header">${dateHeader}</div>`;
+      lastDateHeader = dateHeader;
+    }
+
+    const relTime = formatRelativeTime(act.timestamp);
+    const amountHtml = act.amount
+      ? `<div class="activity-amount">${act.amount}</div>`
+      : '';
+
+    html += `
+      <div class="activity-item" onclick="openGroupDetail('${act.groupId}')">
+        <div class="activity-icon-col">${act.icon || '🧾'}</div>
+        <div class="activity-content">
+          <div class="activity-title">${escapeHtml(act.title)}</div>
+          <div class="activity-subtitle">${escapeHtml(act.subtitle)}</div>
+          <div class="activity-meta">
+            <span>${escapeHtml(act.groupName)}</span>
+            <span>•</span>
+            <span>${relTime}</span>
+          </div>
+        </div>
+        ${amountHtml}
+      </div>
+    `;
+  }
+
+  el.activityListContainer.innerHTML = html;
+}
+
+// -------------------------------------------------------------
+// 15. GitHub In-App Auto-Update System
+// -------------------------------------------------------------
+const GITHUB_REPO = 'FLAMEPOSEIDON/splitwise-p2p';
+let latestUpdateData = null;
+
+async function checkForUpdates(isManual = false) {
+  if (isManual && el.updateStatusText) {
+    el.updateStatusText.textContent = 'Checking GitHub repository for updates...';
+  }
+
+  try {
+    const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/commits/main`, {
+      headers: { Accept: 'application/vnd.github.v3+json' },
+    });
+
+    if (!res.ok) throw new Error(`GitHub API HTTP ${res.status}`);
+    const commitData = await res.json();
+
+    const latestSha = commitData.sha.substring(0, 7);
+    const commitMsg = commitData.commit.message.split('\n')[0];
+    const commitDate = new Date(commitData.commit.author.date).toLocaleString('en-IN');
+    const commitAuthor = commitData.commit.author.name;
+
+    const currentSha = localStorage.getItem('splitwise_installed_commit') || 'b6bb060';
+
+    latestUpdateData = {
+      sha: latestSha,
+      fullSha: commitData.sha,
+      message: commitMsg,
+      date: commitDate,
+      author: commitAuthor,
+      downloadUrl: `https://github.com/FLAMEPOSEIDON/splitwise-p2p/releases/latest/download/SplitwiseP2P.apk`,
+      repoUrl: `https://github.com/${GITHUB_REPO}`,
+    };
+
+    if (latestSha !== currentSha) {
+      if (el.btnHeaderUpdate) el.btnHeaderUpdate.style.display = 'inline-flex';
+      if (el.updateStatusText) {
+        el.updateStatusText.innerHTML = `🚀 <strong style="color: var(--cyan);">Update Available:</strong> ${escapeHtml(commitMsg)} (${latestSha})`;
+      }
+
+      if (isManual) {
+        openUpdateModal();
+      }
+    } else {
+      if (el.btnHeaderUpdate) el.btnHeaderUpdate.style.display = 'none';
+      if (el.updateStatusText) {
+        el.updateStatusText.innerHTML = `✅ You are on the latest version (${latestSha}). Up to date!`;
+      }
+      if (isManual) {
+        showToast('You are on the latest version!');
+      }
+    }
+  } catch (err) {
+    console.warn('Update check failed:', err);
+    if (isManual) {
+      if (el.updateStatusText) {
+        el.updateStatusText.textContent = 'Could not reach GitHub. Check your internet connection.';
+      }
+      showToast('Could not reach GitHub.');
+    }
+  }
+}
+
+function openUpdateModal() {
+  if (!latestUpdateData) {
+    checkForUpdates(true);
+    return;
+  }
+
+  if (el.updateCommitMessage) el.updateCommitMessage.textContent = `"${latestUpdateData.message}"`;
+  if (el.updateCommitMeta) {
+    el.updateCommitMeta.textContent = `Commit: ${latestUpdateData.sha} by ${latestUpdateData.author} on ${latestUpdateData.date}`;
+  }
+
+  openModal('modal-update-available');
+}
+
+function performAppUpdate() {
+  if (!latestUpdateData) return;
+
+  localStorage.setItem('splitwise_installed_commit', latestUpdateData.sha);
+  closeModal('modal-update-available');
+
+  if (isNativeApp && window.AndroidBridge && typeof window.AndroidBridge.installApkUpdate === 'function') {
+    window.AndroidBridge.installApkUpdate(latestUpdateData.downloadUrl);
+    showToast('Starting APK download & update...');
+  } else {
+    window.open(latestUpdateData.downloadUrl, '_blank');
+    showToast('Opening download link...');
+    setTimeout(() => {
+      window.location.reload();
+    }, 1500);
+  }
+}
+
+window.loadActivityFeed = loadActivityFeed;
+window.filterActivityByGroup = filterActivityByGroup;
+window.checkForUpdates = checkForUpdates;
+window.openUpdateModal = openUpdateModal;
+window.performAppUpdate = performAppUpdate;
+
+safeOn(el.btnPerformUpdate, 'click', performAppUpdate);
+safeOn(el.btnHeaderUpdate, 'click', openUpdateModal);
+
 // Initialize on Load
 function initApp() {
   connectWebSocket();
   refreshData();
+  setTimeout(() => {
+    checkForUpdates(false);
+  }, 2000);
 }
 
 if (document.readyState === 'loading') {

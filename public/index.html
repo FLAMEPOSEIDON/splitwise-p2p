@@ -27,6 +27,11 @@
     </div>
 
     <div class="header-actions">
+      <!-- 1-Tap Update Available Button -->
+      <button class="btn-header-update" id="btn-header-update" style="display: none;" onclick="openUpdateModal()" title="New Update Available">
+        <span>🚀 Update</span>
+      </button>
+
       <!-- 1-Tap QR Scanner Button -->
       <button class="btn-header-scan" id="btn-header-scan-qr" onclick="triggerQrScan()" title="Scan QR Code to Join Group">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -98,6 +103,26 @@
             <button class="btn btn-secondary" onclick="openModal('modal-import-csv')">📥 Import export.csv</button>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- VIEW: Activity Feed -->
+    <div id="view-activity" style="display: none;">
+      <div class="section-header">
+        <h2 class="section-title">Activity Feed</h2>
+        <div class="section-actions">
+          <button class="btn btn-secondary btn-sm" id="btn-refresh-activity" onclick="loadActivityFeed()">🔄 Refresh</button>
+        </div>
+      </div>
+
+      <!-- Group Filter Chips for Activity -->
+      <div class="filter-scroll" id="activity-group-filter-chips" style="margin-bottom: 14px;">
+        <div class="filter-chip active" data-activity-group="ALL">All Groups</div>
+      </div>
+
+      <!-- Activity List Container -->
+      <div id="activity-list-container">
+        <div style="text-align: center; padding: 30px; color: var(--text-muted);">Loading activity...</div>
       </div>
     </div>
 
@@ -233,6 +258,27 @@
       <div id="peers-list-container">
         <!-- Dynamically populated -->
       </div>
+
+      <!-- App Version & GitHub Updates Card -->
+      <div class="group-header-card" style="margin-top: 16px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="width: 32px; height: 32px; border-radius: 8px; background: rgba(16, 185, 129, 0.2); display: flex; align-items: center; justify-content: center; font-size: 1.1rem;">
+              🚀
+            </div>
+            <div>
+              <div style="font-weight: 700; font-size: 0.95rem;">App Updates & GitHub</div>
+              <div style="font-size: 0.75rem; color: var(--text-dim);" id="app-version-label">v1.2.0 • FLAMEPOSEIDON/splitwise-p2p</div>
+            </div>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="btn-check-updates" onclick="checkForUpdates(true)">
+            Check Update
+          </button>
+        </div>
+        <div id="update-status-text" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 6px;">
+          Connected to GitHub repository. Tap above to check for updates.
+        </div>
+      </div>
     </div>
 
     <!-- VIEW 4: Certificate & Trusted Install -->
@@ -340,6 +386,16 @@
         </svg>
       </div>
       <div class="nav-label">Groups</div>
+    </div>
+
+    <div class="nav-item" data-view="view-activity">
+      <div class="nav-icon" style="position: relative;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+        </svg>
+        <span class="nav-badge" id="activity-badge" style="display: none;"></span>
+      </div>
+      <div class="nav-label">Activity</div>
     </div>
 
     <div class="nav-item" data-view="view-network">
@@ -629,6 +685,38 @@
       </a>
 
       <button class="btn btn-primary btn-block" id="btn-confirm-settle" style="margin-top: 10px;">Record as Settled in Ledger</button>
+    </div>
+  </div>
+
+  <!-- MODAL: App Update Available -->
+  <div class="modal-overlay" id="modal-update-available">
+    <div class="modal-content" style="text-align: center;">
+      <div class="modal-header">
+        <h3 class="modal-title">🚀 Update Available</h3>
+        <button class="btn-close" data-close="modal-update-available">&times;</button>
+      </div>
+      <div style="width: 58px; height: 58px; border-radius: 16px; background: linear-gradient(135deg, var(--cyan), var(--primary)); display: flex; align-items: center; justify-content: center; font-size: 1.8rem; margin: 0 auto 12px; color: white;">
+        ✨
+      </div>
+      <h3 style="font-size: 1.15rem; margin-bottom: 6px;" id="update-modal-title">New Update Ready!</h3>
+      <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; margin-bottom: 14px;" id="update-modal-desc">
+        A new update is available on GitHub with fixes and improvements.
+      </p>
+
+      <div style="background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; margin-bottom: 16px; text-align: left; font-size: 0.82rem;">
+        <div style="font-weight: 600; color: var(--cyan); margin-bottom: 4px;">Latest Commit on GitHub:</div>
+        <div id="update-commit-message" style="color: var(--text); font-style: italic; margin-bottom: 4px;">...</div>
+        <div style="color: var(--text-dim); font-size: 0.75rem;" id="update-commit-meta">...</div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <button class="btn btn-primary btn-block" id="btn-perform-update" style="padding: 12px; font-weight: 700; font-size: 0.95rem;">
+          ⚡ 1-Tap Update APK
+        </button>
+        <a href="https://github.com/FLAMEPOSEIDON/splitwise-p2p" target="_blank" class="btn btn-secondary btn-block" style="text-decoration: none; padding: 10px; font-size: 0.85rem;">
+          View Repository on GitHub
+        </a>
+      </div>
     </div>
   </div>
 

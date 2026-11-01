@@ -554,5 +554,38 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         public String exportCsv(String groupId) {
             return dbHelper.exportSplitwiseCsv(groupId);
         }
+
+        @JavascriptInterface
+        public String getActivityFeed(String groupId) {
+            return dbHelper.getActivityFeed(groupId).toString();
+        }
+
+        @JavascriptInterface
+        public String getAppVersion() {
+            try {
+                android.content.pm.PackageInfo pInfo = getPackageManager().getPackageInfo(getPackageName(), 0);
+                return pInfo.versionName;
+            } catch (Exception e) {
+                return "1.2.0";
+            }
+        }
+
+        @JavascriptInterface
+        public void installApkUpdate(String downloadUrl) {
+            runOnUiThread(() -> {
+                try {
+                    String url = (downloadUrl != null && !downloadUrl.trim().isEmpty())
+                            ? downloadUrl.trim()
+                            : "https://github.com/FLAMEPOSEIDON/splitwise-p2p/releases/latest/download/SplitwiseP2P.apk";
+                    Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                    browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(browserIntent);
+                    Toast.makeText(MainActivity.this, "Downloading latest APK update...", Toast.LENGTH_LONG).show();
+                } catch (Exception e) {
+                    Log.e(TAG, "Failed to launch update intent", e);
+                    Toast.makeText(MainActivity.this, "Error starting download: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
     }
 }

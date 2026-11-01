@@ -22,6 +22,11 @@
     </div>
 
     <div class="header-actions">
+      <!-- 1-Tap Update Available Button -->
+      <button class="btn-header-update" id="btn-header-update" style="display: none;" onclick="openUpdateModal()" title="New Update Available">
+        <span>🚀 Update</span>
+      </button>
+
       <!-- 1-Tap QR Scanner Button -->
       <button class="btn-header-scan" id="btn-header-scan-qr" onclick="triggerQrScan()" title="Scan QR Code to Join Group">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -43,6 +48,15 @@
 
   <!-- Main Container -->
   <main class="container">
+
+    <!-- Quick Install Banner -->
+    <section class="install-banner" id="install-banner" style="display: none;">
+      <div class="install-banner-text">
+        <h4>Install Splitwise P2P</h4>
+        <p>Run 100% offline like a native app on your home screen</p>
+      </div>
+      <button class="btn-install-quick" id="btn-install-pwa">Install</button>
+    </section>
 
     <!-- VIEW 1: Groups List (Home) -->
     <div id="view-groups">
@@ -84,6 +98,26 @@
             <button class="btn btn-secondary" onclick="openModal('modal-import-csv')">📥 Import export.csv</button>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- VIEW: Activity Feed -->
+    <div id="view-activity" style="display: none;">
+      <div class="section-header">
+        <h2 class="section-title">Activity Feed</h2>
+        <div class="section-actions">
+          <button class="btn btn-secondary btn-sm" id="btn-refresh-activity" onclick="loadActivityFeed()">🔄 Refresh</button>
+        </div>
+      </div>
+
+      <!-- Group Filter Chips for Activity -->
+      <div class="filter-scroll" id="activity-group-filter-chips" style="margin-bottom: 14px;">
+        <div class="filter-chip active" data-activity-group="ALL">All Groups</div>
+      </div>
+
+      <!-- Activity List Container -->
+      <div id="activity-list-container">
+        <div style="text-align: center; padding: 30px; color: var(--text-muted);">Loading activity...</div>
       </div>
     </div>
 
@@ -219,6 +253,115 @@
       <div id="peers-list-container">
         <!-- Dynamically populated -->
       </div>
+
+      <!-- App Version & GitHub Updates Card -->
+      <div class="group-header-card" style="margin-top: 16px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="width: 32px; height: 32px; border-radius: 8px; background: rgba(16, 185, 129, 0.2); display: flex; align-items: center; justify-content: center; font-size: 1.1rem;">
+              🚀
+            </div>
+            <div>
+              <div style="font-weight: 700; font-size: 0.95rem;">App Updates & GitHub</div>
+              <div style="font-size: 0.75rem; color: var(--text-dim);" id="app-version-label">v1.2.0 • FLAMEPOSEIDON/splitwise-p2p</div>
+            </div>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="btn-check-updates" onclick="checkForUpdates(true)">
+            Check Update
+          </button>
+        </div>
+        <div id="update-status-text" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 6px;">
+          Connected to GitHub repository. Tap above to check for updates.
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 4: Certificate & Trusted Install -->
+    <div id="view-cert" style="display: none;">
+      <div class="section-header">
+        <h2 class="section-title">Trusted Certificate & Installation</h2>
+      </div>
+
+      <div class="hero-card" style="border-color: rgba(16, 185, 129, 0.4); background: linear-gradient(135deg, rgba(16, 185, 129, 0.08), rgba(6, 182, 212, 0.08));">
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 10px;">
+          <div style="width: 36px; height: 36px; border-radius: 10px; background: var(--primary); display: flex; align-items: center; justify-content: center; color: white;">
+            🛡️
+          </div>
+          <div>
+            <h3 style="font-size: 1.05rem;">Splitwise P2P Local CA</h3>
+            <span style="font-size: 0.78rem; color: var(--primary);">Verified Local Authority</span>
+          </div>
+        </div>
+        <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; margin-bottom: 16px;">
+          Modern mobile browsers (Chrome on Android, Safari on iOS) require a trusted HTTPS certificate to enable 1-tap app installation and offline background caching.
+        </p>
+        <a href="/splitwise-root-ca.crt" download class="btn btn-primary btn-block">
+          📥 Download Root CA Certificate
+        </a>
+      </div>
+
+      <h3 style="font-size: 1rem; margin-bottom: 12px; color: var(--text);">How to Install on Your Device:</h3>
+
+      <!-- Android Guide -->
+      <div class="guide-step">
+        <div class="step-header">
+          <div class="step-num">1</div>
+          <span>Android (Phones & Tablets)</span>
+        </div>
+        <div class="step-body">
+          1. Tap <strong>Download Root CA Certificate</strong> above.<br>
+          2. Open phone <strong>Settings → Security & Privacy → More security settings → Install from device storage → CA certificate</strong>.<br>
+          3. Tap <strong>Install anyway</strong> and select <code>splitwise-root-ca.crt</code>.<br>
+          4. Return to Chrome and tap <strong>Menu (3 dots) → Install app / Add to Home screen</strong>.
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 5: MongoDB Cloud Addon -->
+    <div id="view-mongo" style="display: none;">
+      <div class="section-header">
+        <h2 class="section-title">Free MongoDB Cloud Addon</h2>
+      </div>
+
+      <div class="group-header-card">
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+          <div style="width: 38px; height: 38px; border-radius: 10px; background: #00ed64; display: flex; align-items: center; justify-content: center; font-size: 1.3rem;">
+            🍃
+          </div>
+          <div>
+            <h3 style="font-size: 1.05rem;">Dual Storage Mode</h3>
+            <span id="mongo-status-badge" style="font-size: 0.8rem; color: var(--text-muted);">Status: 100% Local Only (Offline Mesh)</span>
+          </div>
+        </div>
+        <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; margin-bottom: 16px;">
+          Data is always saved locally. Optionally plug in your free MongoDB database to sync when you are online across different Wi-Fi networks!
+        </p>
+
+        <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+          <button class="btn btn-secondary btn-sm" id="mode-btn-local" style="flex: 1; border-color: var(--primary);">📴 100% Local Only</button>
+          <button class="btn btn-secondary btn-sm" id="mode-btn-mongo" style="flex: 1;">☁️ Local + MongoDB</button>
+        </div>
+
+        <form id="form-mongo-addon" style="display: none;">
+          <div class="form-group">
+            <label class="form-label">MongoDB Connection String</label>
+            <input type="text" class="form-input" id="mongo-uri" placeholder="mongodb+srv://user:pass@cluster.mongodb.net" style="font-family: monospace; font-size: 0.8rem;">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Database Name</label>
+            <input type="text" class="form-input" id="mongo-dbname" value="splitwise">
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button type="submit" class="btn btn-primary" id="btn-save-mongo" style="flex: 2;">Save & Connect</button>
+            <button type="button" class="btn btn-secondary" id="btn-disable-mongo" style="flex: 1;">Disable</button>
+          </div>
+        </form>
+
+        <div id="mongo-sync-info" style="display: none; margin-top: 14px; font-size: 0.82rem; color: var(--text-muted); border-top: 1px solid var(--border); padding-top: 10px;">
+          Last Cloud Sync: <span id="mongo-last-sync-time" style="color: var(--text);">Never</span>
+          <button class="btn btn-secondary btn-sm" id="btn-sync-mongo-now" style="float: right; padding: 2px 8px; font-size: 0.75rem;">☁️ Sync Now</button>
+        </div>
+      </div>
     </div>
 
   </main>
@@ -240,6 +383,16 @@
       <div class="nav-label">Groups</div>
     </div>
 
+    <div class="nav-item" data-view="view-activity">
+      <div class="nav-icon" style="position: relative;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+        </svg>
+        <span class="nav-badge" id="activity-badge" style="display: none;"></span>
+      </div>
+      <div class="nav-label">Activity</div>
+    </div>
+
     <div class="nav-item" data-view="view-network">
       <div class="nav-icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
@@ -250,6 +403,25 @@
         </svg>
       </div>
       <div class="nav-label">Network</div>
+    </div>
+
+    <div class="nav-item" data-view="view-mongo">
+      <div class="nav-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>
+        </svg>
+      </div>
+      <div class="nav-label">MongoDB</div>
+    </div>
+
+    <div class="nav-item" data-view="view-cert">
+      <div class="nav-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          <path d="m9 12 2 2 4-4"/>
+        </svg>
+      </div>
+      <div class="nav-label">Install</div>
     </div>
   </nav>
 
@@ -508,6 +680,38 @@
       </a>
 
       <button class="btn btn-primary btn-block" id="btn-confirm-settle" style="margin-top: 10px;">Record as Settled in Ledger</button>
+    </div>
+  </div>
+
+  <!-- MODAL: App Update Available -->
+  <div class="modal-overlay" id="modal-update-available">
+    <div class="modal-content" style="text-align: center;">
+      <div class="modal-header">
+        <h3 class="modal-title">🚀 Update Available</h3>
+        <button class="btn-close" data-close="modal-update-available">&times;</button>
+      </div>
+      <div style="width: 58px; height: 58px; border-radius: 16px; background: linear-gradient(135deg, var(--cyan), var(--primary)); display: flex; align-items: center; justify-content: center; font-size: 1.8rem; margin: 0 auto 12px; color: white;">
+        ✨
+      </div>
+      <h3 style="font-size: 1.15rem; margin-bottom: 6px;" id="update-modal-title">New Update Ready!</h3>
+      <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; margin-bottom: 14px;" id="update-modal-desc">
+        A new update is available on GitHub with fixes and improvements.
+      </p>
+
+      <div style="background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; margin-bottom: 16px; text-align: left; font-size: 0.82rem;">
+        <div style="font-weight: 600; color: var(--cyan); margin-bottom: 4px;">Latest Commit on GitHub:</div>
+        <div id="update-commit-message" style="color: var(--text); font-style: italic; margin-bottom: 4px;">...</div>
+        <div style="color: var(--text-dim); font-size: 0.75rem;" id="update-commit-meta">...</div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <button class="btn btn-primary btn-block" id="btn-perform-update" style="padding: 12px; font-weight: 700; font-size: 0.95rem;">
+          ⚡ 1-Tap Update APK
+        </button>
+        <a href="https://github.com/FLAMEPOSEIDON/splitwise-p2p" target="_blank" class="btn btn-secondary btn-block" style="text-decoration: none; padding: 10px; font-size: 0.85rem;">
+          View Repository on GitHub
+        </a>
+      </div>
     </div>
   </div>
 

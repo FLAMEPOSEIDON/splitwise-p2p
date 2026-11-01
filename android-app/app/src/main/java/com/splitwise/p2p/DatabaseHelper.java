@@ -785,4 +785,203 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         } catch (Exception ignored) {}
         return 0;
     }
+
+    public JSONArray getActivityFeed(String targetGroupId) {
+        SQLiteDatabase db = getReadableDatabase();
+        JSONArray activities = new JSONArray();
+
+        // 1. Group Map
+        Map<String, String> groupMap = new HashMap<>();
+        Cursor gCur = db.rawQuery("SELECT id, name FROM groups", null);
+        try {
+            while (gCur.moveToNext()) {
+                groupMap.put(gCur.getString(0), gCur.getString(1));
+            }
+        } finally {
+            gCur.close();
+        }
+
+        // 2. Member Map
+        Map<String, String> memberMap = new HashMap<>();
+        Cursor mCur = db.rawQuery("SELECT id, name FROM members", null);
+        try {
+            while (mCur.moveToNext()) {
+                memberMap.put(mCur.getString(0), mCur.getString(1));
+            }
+        } finally {
+            mCur.close();
+        }
+
+        // 3. Expenses
+        String expSql = (targetGroupId != null && !targetGroupId.isEmpty())
+                ? "SELECT * FROM expenses WHERE group_id = ? ORDER BY hlc DESC LIMIT 100"
+                : "SELECT * FROM expenses ORDER BY hlc DESC LIMIT 100";
+        String[] expArgs = (targetGroupId != null && !targetGroupId.isEmpty())
+                ? new String[]{targetGroupId} : null;
+
+        List<JSONObject> list = new ArrayList<>();
+        Cursor eCur = db.rawQuery(expSql, expArgs);
+        try {
+            while (eCur.moveToNext()) {
+                try {
+                    String gid = eCur.getString(eCur.getColumnIndexOrThrow("group_id"));
+                    String gName = groupMap.getOrDefault(gid, "Unknown Group");
+                    String paidBy = eCur.getString(eCur.getColumnIndexOrThrow("paid_by"));
+                    String payerName = memberMap.getOrDefault(paidBy, "Someone");
+                    String desc = eCur.getString(eCur.getColumnIndexOrThrow("description"));
+                    double amt = eCur.getDouble(eCur.getColumnIndexOrThrow("amount"));
+                    String cat = eCur.getString(eCur.getColumnIndexOrThrow("category"));
+                    int deleted = eCur.getInt(eCur.getColumnIndexOrThrow("deleted"));
+                    String hlc = eCur.getString(eCur.getColumnIndexOrThrow("hlc"));
+                    String date = eCur.getString(eCur.getColumnIndexOrThrow("date"));
+                    String id = eCur.getString(eCur.getColumnIndexOrThrow("id"));
+
+                    String timestamp = nowIso();
+                    try {
+                        String[] parts = hlc.split("-");
+                        long ms = Long.parseLong(parts[0]);
+                        if (ms > 0) {
+                            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
+                            sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
+                            timestamp = sdf.format(new Date(ms));
+                        }
+                    } catch (Exception ignored) {}
+
+                    boolean isPayment = (cat != null && cat.equalsIgnoreCase("Payment")) ||
+                            desc.toLowerCase().startsWith("payment:");
+
+                    JSONObject act = new JSONObject();
+                    act.put("id", "exp_" + id);
+                    act.put("groupId", gid);
+                    act.put("groupName", gName);
+                    act.put("timestamp", timestamp);
+                    act.put("date", date);
+                    act.put("rawAmount", amt);
+
+                    if (deleted == 1) {
+                        act.put("type", "EXPENSE_DELETED");
+                        act.put("icon", "🗑️");
+                        act.put("title", payerName + " deleted an expense");
+                        act.put("subtitle", "\"" + desc + "\" (₹" + String.format(Locale.US, "%.2f", amt) + ") in " + gName);
+                        act.put("amount", JSONObject.NULL);
+                    } else if (isPayment) {
+                        String recName = "Someone";
+                        try {
+                            String splitJson = eCur.getString(eCur.getColumnIndexOrThrow("split_between"));
+                            JSONArray splitArr = new JSONArray(splitJson);
+                            if (splitArr.length() > 0) {
+                                Object o = splitArr.get(0);
+                                String rId = (o instanceof JSONObject) ? ((JSONObject) o).getString("memberId") : o.toString();
+                                recName = memberMap.getOrDefault(rId, "Someone");
+                            }
+                        } catch (Exception ignored) {}
+
+                        act.put("type", "PAYMENT_RECORDED");
+                        act.put("icon", "🤝");
+                        act.put("title", payerName + " paid " + recName);
+                        act.put("subtitle", "Settled ₹" + String.format(Locale.US, "%.2f", amt) + " in " + gName);
+                        act.put("amount", "₹" + String.format(Locale.US, "%.2f", amt));
+                    } else {
+                        String icon = "🧾";
+                        if ("Groceries".equals(cat)) icon = "🥦";
+                        else if ("Dining out".equals(cat)) icon = "🍔";
+                        else if ("Rent".equals(cat)) icon = "🏠";
+                        else if ("Household supplies".equals(cat)) icon = "🧻";
+                        else if ("Cleaning".equals(cat)) icon = "🧹";
+                        else if ("Transportation".equals(cat)) icon = "🚗";
+
+                        act.put("type", "EXPENSE_ADDED");
+                        act.put("icon", icon);
+                        act.put("title", payerName + " added \"" + desc + "\"");
+                        act.put("subtitle", "in " + gName + " • " + (cat != null ? cat : "General"));
+                        act.put("amount", "₹" + String.format(Locale.US, "%.2f", amt));
+                    }
+                    list.add(act);
+                } catch (Exception ignored) {}
+            }
+        } finally {
+            eCur.close();
+        }
+
+        // 4. Member joins
+        String mSql = (targetGroupId != null && !targetGroupId.isEmpty())
+                ? "SELECT * FROM members WHERE group_id = ? ORDER BY joined_at DESC LIMIT 20"
+                : "SELECT * FROM members ORDER BY joined_at DESC LIMIT 30";
+        String[] mArgs = (targetGroupId != null && !targetGroupId.isEmpty())
+                ? new String[]{targetGroupId} : null;
+        Cursor mJoinCur = db.rawQuery(mSql, mArgs);
+        try {
+            while (mJoinCur.moveToNext()) {
+                try {
+                    String gid = mJoinCur.getString(mJoinCur.getColumnIndexOrThrow("group_id"));
+                    String gName = groupMap.getOrDefault(gid, "Unknown Group");
+                    String name = mJoinCur.getString(mJoinCur.getColumnIndexOrThrow("name"));
+                    String joinedAt = mJoinCur.getString(mJoinCur.getColumnIndexOrThrow("joined_at"));
+                    String id = mJoinCur.getString(mJoinCur.getColumnIndexOrThrow("id"));
+
+                    JSONObject act = new JSONObject();
+                    act.put("id", "mem_" + id);
+                    act.put("type", "MEMBER_JOINED");
+                    act.put("icon", "👤");
+                    act.put("title", name + " joined the group");
+                    act.put("subtitle", "in " + gName);
+                    act.put("amount", JSONObject.NULL);
+                    act.put("rawAmount", 0);
+                    act.put("groupId", gid);
+                    act.put("groupName", gName);
+                    act.put("timestamp", joinedAt);
+                    act.put("date", joinedAt != null && joinedAt.contains("T") ? joinedAt.split("T")[0] : null);
+                    list.add(act);
+                } catch (Exception ignored) {}
+            }
+        } finally {
+            mJoinCur.close();
+        }
+
+        // 5. Group creations
+        String gSql = (targetGroupId != null && !targetGroupId.isEmpty())
+                ? "SELECT * FROM groups WHERE id = ?"
+                : "SELECT * FROM groups ORDER BY created_at DESC LIMIT 20";
+        String[] gArgs = (targetGroupId != null && !targetGroupId.isEmpty())
+                ? new String[]{targetGroupId} : null;
+        Cursor gCreateCur = db.rawQuery(gSql, gArgs);
+        try {
+            while (gCreateCur.moveToNext()) {
+                try {
+                    String gid = gCreateCur.getString(gCreateCur.getColumnIndexOrThrow("id"));
+                    String gName = gCreateCur.getString(gCreateCur.getColumnIndexOrThrow("name"));
+                    String createdAt = gCreateCur.getString(gCreateCur.getColumnIndexOrThrow("created_at"));
+
+                    JSONObject act = new JSONObject();
+                    act.put("id", "grp_" + gid);
+                    act.put("type", "GROUP_CREATED");
+                    act.put("icon", "👥");
+                    act.put("title", "Group \"" + gName + "\" created");
+                    act.put("subtitle", "Ready for offline mesh expense splitting");
+                    act.put("amount", JSONObject.NULL);
+                    act.put("rawAmount", 0);
+                    act.put("groupId", gid);
+                    act.put("groupName", gName);
+                    act.put("timestamp", createdAt);
+                    act.put("date", createdAt != null && createdAt.contains("T") ? createdAt.split("T")[0] : null);
+                    list.add(act);
+                } catch (Exception ignored) {}
+            }
+        } finally {
+            gCreateCur.close();
+        }
+
+        // Sort descending by timestamp
+        Collections.sort(list, (a, b) -> {
+            String tA = a.optString("timestamp", "");
+            String tB = b.optString("timestamp", "");
+            return tB.compareTo(tA);
+        });
+
+        for (int i = 0; i < Math.min(100, list.size()); i++) {
+            activities.put(list.get(i));
+        }
+
+        return activities;
+    }
 }

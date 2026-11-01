@@ -7,6 +7,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -51,7 +54,7 @@ jobs:
           cd android-app
           gradle assembleRelease --stacktrace
 
-      - name: Upload Signed APK
+      - name: Upload Signed APK Artifact
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -60,3 +63,25 @@ jobs:
             android-app/app/build/outputs/apk/release/*.apk
             android-app/app/build/outputs/apk/debug/*.apk
           retention-days: 30
+
+      - name: Prepare Release Asset
+        if: github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p release-assets
+          cp android-app/app/build/outputs/apk/release/*.apk release-assets/SplitwiseP2P.apk || true
+
+      - name: Publish GitHub Release (In-App Auto-Update Distribution)
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        continue-on-error: true
+        with:
+          tag_name: latest
+          name: "Splitwise P2P — Latest Release"
+          body: |
+            ### 🚀 Splitwise P2P Release
+            - **Direct APK download** for seamless in-app auto-updates.
+            - Includes Activity feed tab, Offline Mesh Sync, Google Quick Share, ML Kit Scanner, and INR support.
+            - **Commit**: ${{ github.sha }}
+          files: release-assets/SplitwiseP2P.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

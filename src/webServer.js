@@ -219,6 +219,29 @@ class WebServer {
       return;
     }
 
+    // GET /api/activity
+    if (pathname === '/api/activity' && req.method === 'GET') {
+      const targetGroupId = query.groupId || null;
+      const limit = parseInt(query.limit, 10) || 100;
+      const feed = expenses.getActivityFeed(limit, targetGroupId);
+      sendJson(200, feed);
+      return;
+    }
+
+    // GET /api/version
+    if (pathname === '/api/version' && req.method === 'GET') {
+      sendJson(200, {
+        version: '1.2.0',
+        repo: 'FLAMEPOSEIDON/splitwise-p2p',
+        branch: 'main',
+        downloadUrl: 'https://github.com/FLAMEPOSEIDON/splitwise-p2p/releases/latest/download/SplitwiseP2P.apk',
+        releasesApiUrl: 'https://api.github.com/repos/FLAMEPOSEIDON/splitwise-p2p/releases/latest',
+        commitsApiUrl: 'https://api.github.com/repos/FLAMEPOSEIDON/splitwise-p2p/commits/main',
+        repoUrl: 'https://github.com/FLAMEPOSEIDON/splitwise-p2p',
+      });
+      return;
+    }
+
     // GET /api/groups
     if (pathname === '/api/groups' && req.method === 'GET') {
       const groups = expenses.listGroups();

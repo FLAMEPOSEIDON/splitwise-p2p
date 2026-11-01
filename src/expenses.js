@@ -537,6 +537,161 @@ function exportSplitwiseCsv(groupId) {
   return rows.join('\n');
 }
 
+/**
+ * Retrieve a rich, chronological activity feed of all actions:
+ * - Expenses added
+ * - Payments settled
+ * - Expenses deleted
+ * - Members joined
+ * - Groups created
+ */
+function getActivityFeed(limit = 100, targetGroupId = null) {
+  const activities = [];
+
+  // 1. Group names & members cache
+  const groups = listGroups();
+  const groupMap = Object.fromEntries(groups.map((g) => [g.id, g.name]));
+  const allMembers = db.prepare(`SELECT * FROM members`).all();
+  const memberMap = Object.fromEntries(allMembers.map((m) => [m.id, m.name]));
+
+  // 2. Query expenses
+  const expQuery = targetGroupId
+    ? db.prepare(`SELECT * FROM expenses WHERE group_id = ? ORDER BY hlc DESC LIMIT ?`).all(targetGroupId, limit)
+    : db.prepare(`SELECT * FROM expenses ORDER BY hlc DESC LIMIT ?`).all(limit);
+
+  for (const exp of expQuery) {
+    const groupName = groupMap[exp.group_id] || 'Unknown Group';
+    const payerName = memberMap[exp.paid_by] || 'Someone';
+
+    // Parse timestamp from HLC: format is "<physical_ms_padded>-<counter>-<deviceId>"
+    let timestamp = null;
+    try {
+      const parts = exp.updated_hlc ? exp.updated_hlc.split('-') : exp.hlc.split('-');
+      const ms = parseInt(parts[0], 10);
+      if (!isNaN(ms) && ms > 0) {
+        timestamp = new Date(ms).toISOString();
+      }
+    } catch (_) {}
+
+    if (!timestamp) {
+      timestamp = exp.date ? new Date(exp.date).toISOString() : new Date().toISOString();
+    }
+
+    const isPayment = (exp.category && exp.category.toLowerCase() === 'payment') ||
+      exp.description.toLowerCase().startsWith('payment:');
+
+    if (exp.deleted) {
+      activities.push({
+        id: `del_${exp.id}`,
+        type: 'EXPENSE_DELETED',
+        icon: '🗑️',
+        title: `${payerName} deleted an expense`,
+        subtitle: `"${exp.description}" (₹${exp.amount.toFixed(2)}) in ${groupName}`,
+        amount: null,
+        rawAmount: exp.amount,
+        groupId: exp.group_id,
+        groupName,
+        timestamp,
+        date: exp.date,
+      });
+    } else if (isPayment) {
+      let receiverName = 'Someone';
+      try {
+        const split = JSON.parse(exp.split_between);
+        if (split.length > 0) {
+          const recId = typeof split[0] === 'object' ? split[0].memberId : split[0];
+          receiverName = memberMap[recId] || receiverName;
+        }
+      } catch (_) {}
+
+      activities.push({
+        id: `pay_${exp.id}`,
+        type: 'PAYMENT_RECORDED',
+        icon: '🤝',
+        title: `${payerName} paid ${receiverName}`,
+        subtitle: `Settled ₹${exp.amount.toFixed(2)} in ${groupName}`,
+        amount: `₹${exp.amount.toFixed(2)}`,
+        rawAmount: exp.amount,
+        groupId: exp.group_id,
+        groupName,
+        timestamp,
+        date: exp.date,
+      });
+    } else {
+      activities.push({
+        id: `exp_${exp.id}`,
+        type: 'EXPENSE_ADDED',
+        icon: exp.category === 'Groceries' ? '🥦' :
+              exp.category === 'Dining out' ? '🍔' :
+              exp.category === 'Rent' ? '🏠' :
+              exp.category === 'Household supplies' ? '🧻' :
+              exp.category === 'Cleaning' ? '🧹' :
+              exp.category === 'Transportation' ? '🚗' : '🧾',
+        title: `${payerName} added "${exp.description}"`,
+        subtitle: `in ${groupName} • ${exp.category || 'General'}`,
+        amount: `₹${exp.amount.toFixed(2)}`,
+        rawAmount: exp.amount,
+        groupId: exp.group_id,
+        groupName,
+        timestamp,
+        date: exp.date,
+      });
+    }
+  }
+
+  // 3. Member joins
+  const memberQuery = targetGroupId
+    ? db.prepare(`SELECT * FROM members WHERE group_id = ? ORDER BY joined_at DESC LIMIT 20`).all(targetGroupId)
+    : db.prepare(`SELECT * FROM members ORDER BY joined_at DESC LIMIT 30`).all();
+
+  for (const m of memberQuery) {
+    const groupName = groupMap[m.group_id] || 'Unknown Group';
+    activities.push({
+      id: `mem_${m.id}`,
+      type: 'MEMBER_JOINED',
+      icon: '👤',
+      title: `${m.name} joined the group`,
+      subtitle: `in ${groupName}`,
+      amount: null,
+      rawAmount: 0,
+      groupId: m.group_id,
+      groupName,
+      timestamp: m.joined_at,
+      date: m.joined_at ? m.joined_at.split('T')[0] : null,
+    });
+  }
+
+  // 4. Group creations
+  const groupQuery = targetGroupId
+    ? db.prepare(`SELECT * FROM groups WHERE id = ?`).all(targetGroupId)
+    : db.prepare(`SELECT * FROM groups ORDER BY created_at DESC LIMIT 20`).all();
+
+  for (const g of groupQuery) {
+    activities.push({
+      id: `grp_${g.id}`,
+      type: 'GROUP_CREATED',
+      icon: '👥',
+      title: `Group "${g.name}" created`,
+      subtitle: `Ready for offline mesh expense splitting`,
+      amount: null,
+      rawAmount: 0,
+      groupId: g.id,
+      groupName: g.name,
+      timestamp: g.created_at,
+      date: g.created_at ? g.created_at.split('T')[0] : null,
+    });
+  }
+
+  // Sort all activities in descending order (newest first)
+  activities.sort((a, b) => {
+    const timeA = new Date(a.timestamp || 0).getTime();
+    const timeB = new Date(b.timestamp || 0).getTime();
+    return timeB - timeA;
+  });
+
+  return activities.slice(0, limit);
+}
+
 module.exports = {
   createGroup,
   joinGroupStub,
@@ -554,4 +709,5 @@ module.exports = {
   simplifyDebts,
   importSplitwiseCsv,
   exportSplitwiseCsv,
+  getActivityFeed,
 };
