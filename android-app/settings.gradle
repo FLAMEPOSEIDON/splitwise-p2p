@@ -1,0 +1,2 @@
+rootProject.name = "SplitwiseP2P"
+include ':app'

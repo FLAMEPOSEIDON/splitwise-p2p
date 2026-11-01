@@ -1,0 +1,56 @@
+name: Build Splitwise P2P Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Generate Release Keystore
+        run: |
+          cd android-app/app
+          keytool -genkeypair -v \
+            -keystore splitwise-release.keystore \
+            -alias splitwise \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Splitwise P2P, OU=Mesh Network, O=Splitwise P2P, C=US" \
+            -storepass splitwise123 \
+            -keypass splitwise123
+
+      - name: Grant Execute Permission for Gradle Wrapper
+        run: |
+          cd android-app
+          gradle wrapper --gradle-version 8.5
+          chmod +x gradlew
+
+      - name: Build Release APK
+        run: |
+          cd android-app
+          ./gradlew assembleRelease --stacktrace
+
+      - name: Upload Signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Splitwise-P2P-Release-APK
+          path: android-app/app/build/outputs/apk/release/*.apk
+          retention-days: 30

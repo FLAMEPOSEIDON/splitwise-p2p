@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Splitwise P2P — Offline Mesh Expense Sharing</title>
+  <meta name="theme-color" content="#10b981">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- App Header -->
+  <header class="app-header">
+    <div class="brand" id="brand-home" style="cursor: pointer;">
+      <div class="brand-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 3v6M12 15v6M3 12h6M15 12h6" />
+        </svg>
+      </div>
+      <span>Splitwise <span style="color: var(--primary);">P2P</span></span>
+    </div>
+
+    <div class="header-actions">
+      <div class="status-pill" id="status-pill" title="Click to view network sync status">
+        <div class="status-dot online" id="status-dot"></div>
+        <span id="status-text">Native Wi-Fi Mesh</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="container">
+
+    <!-- VIEW 1: Groups List (Home) -->
+    <div id="view-groups">
+      <!-- Balance Hero Card -->
+      <section class="hero-card">
+        <div class="hero-subtitle">Overall Total Balance</div>
+        <div class="hero-balance zero" id="hero-balance">$0.00</div>
+        <div class="hero-details">
+          <div class="hero-col">
+            <div class="hero-col-label">You are owed</div>
+            <div class="hero-col-val" id="hero-owed" style="color: var(--primary);">$0.00</div>
+          </div>
+          <div class="hero-col">
+            <div class="hero-col-label">You owe</div>
+            <div class="hero-col-val" id="hero-owe" style="color: var(--rose);">$0.00</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section Actions -->
+      <div class="section-header">
+        <h2 class="section-title">Your Groups</h2>
+        <div class="section-actions">
+          <button class="btn btn-secondary btn-sm" id="btn-join-group-modal">+ Join</button>
+          <button class="btn btn-primary btn-sm" id="btn-create-group-modal">+ New Group</button>
+        </div>
+      </div>
+
+      <!-- Groups List Container -->
+      <div class="group-list" id="group-list-container">
+        <div class="empty-state">
+          <div class="empty-state-icon">👥</div>
+          <h3>No groups yet</h3>
+          <p>Create a group with your friends or join an existing one to start splitting expenses offline.</p>
+          <button class="btn btn-primary" id="btn-create-first-group">Create a Group</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 2: Group Detail -->
+    <div id="view-group-detail" style="display: none;">
+      <div class="back-bar" id="btn-back-to-groups">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <polyline points="15 18 9 12 15 6" />
+        </svg>
+        <span>Back to Groups</span>
+      </div>
+
+      <div class="group-header-card">
+        <div class="group-title-row">
+          <h2 class="section-title" id="detail-group-name">Group Name</h2>
+          <span class="group-id-badge" id="detail-group-id" title="Tap to copy Group ID">ID: ...</span>
+        </div>
+        <div class="hero-subtitle" id="detail-group-meta">0 members • Total spend: $0.00</div>
+        <div class="hero-balance zero" id="detail-group-balance" style="font-size: 1.5rem; margin-top: 10px;">$0.00</div>
+      </div>
+
+      <!-- Detail Tabs -->
+      <div class="tabs">
+        <div class="tab active" data-tab="expenses">Expenses</div>
+        <div class="tab" data-tab="balances">Balances & Settle Up</div>
+        <div class="tab" data-tab="members">Members & QR</div>
+      </div>
+
+      <!-- Tab Content: Expenses -->
+      <div id="tab-content-expenses">
+        <div id="expenses-list-container"></div>
+      </div>
+
+      <!-- Tab Content: Balances & Settlements -->
+      <div id="tab-content-balances" style="display: none;">
+        <h3 style="font-size: 1rem; margin-bottom: 12px; color: var(--text-muted);">Suggested Settlements</h3>
+        <div id="settlements-list-container"></div>
+
+        <h3 style="font-size: 1rem; margin: 20px 0 12px; color: var(--text-muted);">Individual Balances</h3>
+        <div id="balances-list-container"></div>
+      </div>
+
+      <!-- Tab Content: Members & QR -->
+      <div id="tab-content-members" style="display: none;">
+        <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 18px; margin-bottom: 16px;">
+          <h4 style="margin-bottom: 8px;">Share Group ID</h4>
+          <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 16px;">
+            Friends on the same Wi-Fi can join this group using this ID.
+          </p>
+          <button class="btn btn-primary btn-block" id="btn-copy-group-id">Copy Group ID</button>
+        </div>
+
+        <h4 style="font-size: 0.95rem; margin-bottom: 10px; color: var(--text-muted);">Group Members</h4>
+        <div id="members-list-container"></div>
+      </div>
+    </div>
+
+    <!-- VIEW 3: Network & Mesh Sync -->
+    <div id="view-network" style="display: none;">
+      <div class="section-header">
+        <h2 class="section-title">Wi-Fi Mesh & Sync</h2>
+      </div>
+
+      <div class="group-header-card">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+          <div class="status-dot online"></div>
+          <h3 style="font-size: 1.1rem;">Native Android Mesh</h3>
+        </div>
+        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 14px;">
+          All phones with Splitwise P2P installed automatically discover each other via Wi-Fi mDNS and sync their databases using Hybrid Logical Clocks.
+        </p>
+        <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: var(--radius-sm); font-size: 0.85rem;">
+          <div><strong>Device ID:</strong> <span id="net-device-id" style="font-family: monospace;">...</span></div>
+          <div style="margin-top: 4px;"><strong>Device Name:</strong> <span id="net-device-name">...</span></div>
+        </div>
+      </div>
+
+      <div class="section-header">
+        <h3 class="section-title" style="font-size: 1rem;">Discovered Wi-Fi Peers</h3>
+        <button class="btn btn-secondary btn-sm" id="btn-manual-peer-modal">+ Connect IP</button>
+      </div>
+
+      <div id="peers-list-container"></div>
+    </div>
+
+    <!-- VIEW 4: MongoDB Cloud Addon -->
+    <div id="view-mongo" style="display: none;">
+      <div class="section-header">
+        <h2 class="section-title">Cloud Storage Addon (MongoDB)</h2>
+      </div>
+
+      <div class="hero-card" style="border-color: rgba(6, 182, 212, 0.4); background: linear-gradient(135deg, rgba(6, 182, 212, 0.08), rgba(16, 185, 129, 0.08));">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="width: 38px; height: 38px; border-radius: 10px; background: #00ed64; display: flex; align-items: center; justify-content: center; font-size: 1.3rem;">
+              🍃
+            </div>
+            <div>
+              <h3 style="font-size: 1.05rem;">MongoDB Atlas (Free)</h3>
+              <span id="mongo-status-badge" style="font-size: 0.78rem; color: var(--text-muted);">Status: Local Mode Only</span>
+            </div>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="btn-sync-mongo-now" style="display: none;">☁️ Sync Now</button>
+        </div>
+        <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; margin-bottom: 14px;">
+          Run <strong>100% locally</strong> or connect your free MongoDB Atlas database as an addon. When enabled, data is stored on <strong>both local and cloud</strong>!
+        </p>
+
+        <!-- Mode Toggle -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px;">
+          <button type="button" class="btn btn-secondary" id="mode-btn-local" style="border-color: var(--primary); background: rgba(16, 185, 129, 0.15); font-size: 0.82rem;">
+            📱 Local Only
+          </button>
+          <button type="button" class="btn btn-secondary" id="mode-btn-mongo" style="font-size: 0.82rem;">
+            ☁️ Local + MongoDB
+          </button>
+        </div>
+
+        <!-- MongoDB Config Form -->
+        <form id="form-mongo-addon" style="display: none;">
+          <div class="form-group">
+            <label class="form-label">MongoDB Connection URI</label>
+            <input type="text" class="form-input" id="mongo-uri" placeholder="mongodb+srv://user:pass@cluster0.mongodb.net/splitwise" required>
+            <span style="font-size: 0.75rem; color: var(--text-dim); margin-top: 4px; display: block;">
+              Get a free database at mongodb.com/atlas (M0 Sandbox is 100% free forever)
+            </span>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Database Name</label>
+            <input type="text" class="form-input" id="mongo-dbname" value="splitwise_p2p">
+          </div>
+          <div style="display: flex; gap: 10px;">
+            <button type="submit" class="btn btn-primary" style="flex: 1;" id="btn-save-mongo">Save & Connect</button>
+            <button type="button" class="btn btn-secondary" id="btn-disable-mongo" style="color: var(--rose);">Disable</button>
+          </div>
+        </form>
+
+        <div id="mongo-sync-info" style="margin-top: 14px; font-size: 0.8rem; color: var(--text-dim); text-align: center; display: none;">
+          Last cloud sync: <span id="mongo-last-sync-time">Never</span>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Floating Action Button: Add Expense -->
+  <button class="fab" id="fab-add-expense" style="display: none;" title="Add Expense">+</button>
+
+  <!-- Bottom Navigation Bar -->
+  <nav class="bottom-nav">
+    <div class="nav-item active" data-view="view-groups">
+      <span class="nav-icon">👥</span>
+      <span>Groups</span>
+    </div>
+    <div class="nav-item" data-view="view-network">
+      <span class="nav-icon">📡</span>
+      <span>Wi-Fi Mesh</span>
+    </div>
+    <div class="nav-item" data-view="view-mongo">
+      <span class="nav-icon">☁️</span>
+      <span>MongoDB</span>
+    </div>
+  </nav>
+
+  <!-- MODAL: Add Expense -->
+  <div class="modal-overlay" id="modal-add-expense">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">Add an Expense</h3>
+        <button class="btn-close" data-close="modal-add-expense">&times;</button>
+      </div>
+      <form id="form-add-expense">
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <input type="text" class="form-input" id="exp-desc" placeholder="e.g. Dinner, Groceries, Uber" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Amount ($)</label>
+          <input type="number" step="0.01" min="0.01" class="form-input" id="exp-amount" placeholder="0.00" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Paid by</label>
+          <select class="form-select" id="exp-paid-by" required></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Split equally between</label>
+          <div class="checkbox-group" id="exp-split-checkboxes"></div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Save Expense</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: Create Group -->
+  <div class="modal-overlay" id="modal-create-group">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">Create New Group</h3>
+        <button class="btn-close" data-close="modal-create-group">&times;</button>
+      </div>
+      <form id="form-create-group">
+        <div class="form-group">
+          <label class="form-label">Group Name</label>
+          <input type="text" class="form-input" id="create-group-name" placeholder="e.g. Goa Trip, Roommates, Dinner" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Your Name</label>
+          <input type="text" class="form-input" id="create-your-name" placeholder="e.g. Chandan" required>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Create Group</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: Join Group -->
+  <div class="modal-overlay" id="modal-join-group">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">Join Existing Group</h3>
+        <button class="btn-close" data-close="modal-join-group">&times;</button>
+      </div>
+      <form id="form-join-group">
+        <div class="form-group">
+          <label class="form-label">Group ID</label>
+          <input type="text" class="form-input" id="join-group-id" placeholder="Paste Group ID from friend" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Your Name</label>
+          <input type="text" class="form-input" id="join-your-name" placeholder="e.g. Chandan" required>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Join Group</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: Connect Manual Peer IP -->
+  <div class="modal-overlay" id="modal-manual-peer">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">Connect Peer by IP</h3>
+        <button class="btn-close" data-close="modal-manual-peer">&times;</button>
+      </div>
+      <form id="form-manual-peer">
+        <div class="form-group">
+          <label class="form-label">Peer IP Address</label>
+          <input type="text" class="form-input" id="peer-host" placeholder="e.g. 192.168.1.45" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Port</label>
+          <input type="number" class="form-input" id="peer-port" value="47811" required>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Connect</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: Settle Up Confirm -->
+  <div class="modal-overlay" id="modal-settle-up">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">Record Payment</h3>
+        <button class="btn-close" data-close="modal-settle-up">&times;</button>
+      </div>
+      <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 16px;">
+        <div id="settle-summary-text" style="font-size: 1.05rem; font-weight: 700; text-align: center;">...</div>
+      </div>
+      <button class="btn btn-primary btn-block" id="btn-confirm-settle">Record as Settled</button>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div class="toast" id="toast">Update saved</div>
+
+  <!-- Dummy hidden elements for compatibility with shared app.js -->
+  <div style="display:none;">
+    <button id="btn-cert-header"></button>
+    <section id="install-banner"><button id="btn-install-pwa"></button></section>
+    <div id="view-cert"></div>
+    <div id="group-qr-container"></div>
+    <div id="network-qr-container"></div>
+    <span id="net-local-ip"></span>
+  </div>
+
+  <!-- Application Script -->
+  <script src="app.js"></script>
+</body>
+</html>
