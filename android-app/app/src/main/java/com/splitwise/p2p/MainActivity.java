@@ -17,6 +17,7 @@ import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -156,11 +157,21 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                String url = request.getUrl().toString();
-                if (url.startsWith("file:") || url.startsWith("http://127.0.0.1") || url.startsWith("http://localhost")) {
-                    return false;
+                if (request != null && request.getUrl() != null) {
+                    String url = request.getUrl().toString();
+                    if (url.startsWith("file:") || url.startsWith("http://127.0.0.1") || url.startsWith("http://localhost")) {
+                        return false;
+                    }
                 }
                 return true; // Prevent WebView from redirecting to broken external pages
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                if (url != null && (url.startsWith("file:") || url.startsWith("http://127.0.0.1") || url.startsWith("http://localhost"))) {
+                    return false;
+                }
+                return true;
             }
         });
 
