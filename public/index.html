@@ -434,7 +434,7 @@
   <div class="modal-overlay" id="modal-add-expense">
     <div class="modal-content">
       <div class="modal-header">
-        <h3 class="modal-title">Add an Expense</h3>
+        <h3 class="modal-title" id="modal-expense-title">Add an Expense</h3>
         <button class="btn-close" data-close="modal-add-expense">&times;</button>
       </div>
       <form id="form-add-expense">
@@ -459,6 +459,7 @@
             <label class="form-label">Category</label>
             <select class="form-select" id="exp-category">
               <option value="General">🧾 General</option>
+              <option value="Payment">🤝 Payment / Settlement</option>
               <option value="Groceries">🥦 Groceries</option>
               <option value="Dining out">🍔 Dining out</option>
               <option value="Rent">🏠 Rent</option>
@@ -470,22 +471,42 @@
             </select>
           </div>
           <div class="form-group" style="flex: 1;">
-            <label class="form-label">Paid by</label>
+            <label class="form-label" id="exp-paid-by-label">Paid by</label>
             <select class="form-select" id="exp-paid-by" required></select>
           </div>
         </div>
 
-        <div class="form-group">
+        <div class="form-group" id="group-split-method">
           <label class="form-label">Split Method</label>
           <div class="split-mode-toggle">
             <div class="split-mode-btn active" id="btn-split-equal">Split Equally</div>
             <div class="split-mode-btn" id="btn-split-custom">Exact Shares (₹)</div>
           </div>
           <div class="checkbox-group" id="exp-split-checkboxes"></div>
-          <div id="exp-custom-split-container" style="display: none; margin-top: 8px;"></div>
+          <div id="exp-custom-split-container" style="display: none; margin-top: 8px;">
+            <div class="split-math-bar" id="split-math-bar">
+              <div class="split-math-item">
+                <span class="split-math-label">Total</span>
+                <span class="split-math-val" id="math-total">₹0.00</span>
+              </div>
+              <div class="split-math-item">
+                <span class="split-math-label">Allocated</span>
+                <span class="split-math-val" id="math-allocated">₹0.00</span>
+              </div>
+              <div class="split-math-item">
+                <span class="split-math-label">Remaining</span>
+                <span class="split-math-val" id="math-remaining">₹0.00</span>
+              </div>
+            </div>
+            <div class="split-math-actions">
+              <button type="button" class="btn-xs" id="btn-auto-split-remaining">⚡ Split remaining evenly</button>
+              <button type="button" class="btn-xs" id="btn-reset-equal-shares">🔄 Reset equal</button>
+            </div>
+            <div id="exp-custom-split-inputs"></div>
+          </div>
         </div>
 
-        <button type="submit" class="btn btn-primary btn-block">Save Expense</button>
+        <button type="submit" class="btn btn-primary btn-block" id="btn-submit-expense">Save Expense</button>
       </form>
     </div>
   </div>
@@ -675,16 +696,11 @@
         <h3 class="modal-title">Record Payment</h3>
         <button class="btn-close" data-close="modal-settle-up">&times;</button>
       </div>
-      <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 16px;">
-        <div id="settle-summary-text" style="font-size: 1.05rem; font-weight: 700; text-align: center;">...</div>
+      <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: var(--radius-sm); padding: 16px; margin-bottom: 16px;">
+        <div id="settle-summary-text" style="font-size: 1.05rem; font-weight: 700; text-align: center; color: var(--text);">...</div>
       </div>
 
-      <!-- UPI Payment Shortcut -->
-      <a id="btn-pay-upi" href="#" class="btn-upi" style="display: none; text-decoration: none;">
-        <span>⚡ Pay via UPI (GPay / PhonePe / Paytm)</span>
-      </a>
-
-      <button class="btn btn-primary btn-block" id="btn-confirm-settle" style="margin-top: 10px;">Record as Settled in Ledger</button>
+      <button class="btn btn-primary btn-block" id="btn-confirm-settle" style="padding: 12px; font-weight: 700; font-size: 0.95rem;">Record as Settled in Ledger</button>
     </div>
   </div>
 

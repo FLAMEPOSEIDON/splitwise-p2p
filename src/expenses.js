@@ -152,6 +152,42 @@ function deleteExpense(hlcClock, expenseId) {
   );
 }
 
+function updateExpense(hlcClock, expenseId, {
+  description,
+  amount,
+  paidBy,
+  splitBetween,
+  category = 'General',
+  date = null,
+  deviceId
+}) {
+  const hlc = hlcClock.tick();
+  const expenseDate = date || new Date().toISOString().split('T')[0];
+
+  db.prepare(
+    `UPDATE expenses SET
+       description = ?,
+       amount = ?,
+       paid_by = ?,
+       split_between = ?,
+       category = ?,
+       date = ?,
+       updated_hlc = ?
+     WHERE id = ?`
+  ).run(
+    description,
+    amount,
+    paidBy,
+    JSON.stringify(splitBetween),
+    category,
+    expenseDate,
+    hlc,
+    expenseId
+  );
+
+  return { id: expenseId, description, amount, paidBy, splitBetween, category, date: expenseDate, updated_hlc: hlc };
+}
+
 function listExpenses(groupId, { includeDeleted = false } = {}) {
   const query = includeDeleted
     ? `SELECT * FROM expenses WHERE group_id = ? ORDER BY date DESC, hlc DESC`
@@ -702,6 +738,7 @@ module.exports = {
   listGroups,
   listMembers,
   addExpense,
+  updateExpense,
   deleteExpense,
   settleDebt,
   listExpenses,

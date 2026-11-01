@@ -296,6 +296,10 @@ public class NearbySyncService {
                 handleSyncRequest(endpointId, msg);
             } else if ("SYNC_DATA".equals(type)) {
                 handleSyncData(msg);
+            } else if ("SYNC_DATA_HEADER".equals(type)) {
+                handleSyncHeader(msg);
+            } else if ("SYNC_DATA_CHUNK".equals(type)) {
+                handleSyncChunk(msg);
             }
         } catch (Exception e) {
             Log.e(TAG, "Error parsing nearby message", e);
@@ -357,22 +361,38 @@ public class NearbySyncService {
 
     private void sendSyncDataForGroups(String endpointId, List<String> groupIds) {
         try {
-            JSONObject payload = new JSONObject();
-            payload.put("type", "SYNC_DATA");
-            payload.put("deviceId", deviceId);
-            JSONObject groupsObj = new JSONObject();
-
             for (String gid : groupIds) {
-                JSONObject gData = new JSONObject();
-                gData.put("info", db.getGroup(gid));
-                gData.put("members", db.listMembers(gid));
-                gData.put("expenses", db.listExpenses(gid, true));
-                groupsObj.put(gid, gData);
+                JSONObject header = new JSONObject();
+                header.put("type", "SYNC_DATA_HEADER");
+                header.put("deviceId", deviceId);
+                header.put("groupId", gid);
+                header.put("info", db.getGroup(gid));
+                header.put("members", db.listMembers(gid));
+                sendPayload(endpointId, header);
+
+                JSONArray allExpenses = db.listExpenses(gid, true);
+                sendExpensesInChunks(endpointId, gid, allExpenses);
             }
-            payload.put("groups", groupsObj);
-            sendPayload(endpointId, payload);
         } catch (Exception e) {
             Log.e(TAG, "Error sending sync data for groups", e);
+        }
+    }
+
+    private void sendExpensesInChunks(String endpointId, String gid, JSONArray allExpenses) {
+        int chunkSize = 25;
+        for (int i = 0; i < allExpenses.length(); i += chunkSize) {
+            try {
+                JSONArray chunk = new JSONArray();
+                for (int j = i; j < Math.min(i + chunkSize, allExpenses.length()); j++) {
+                    chunk.put(allExpenses.getJSONObject(j));
+                }
+                JSONObject chunkPayload = new JSONObject();
+                chunkPayload.put("type", "SYNC_DATA_CHUNK");
+                chunkPayload.put("deviceId", deviceId);
+                chunkPayload.put("groupId", gid);
+                chunkPayload.put("expenses", chunk);
+                sendPayload(endpointId, chunkPayload);
+            } catch (Exception ignored) {}
         }
     }
 
@@ -381,18 +401,17 @@ public class NearbySyncService {
             JSONArray reqGroups = msg.getJSONArray("groups");
             JSONObject checkpoints = msg.getJSONObject("checkpoints");
 
-            JSONObject payload = new JSONObject();
-            payload.put("type", "SYNC_DATA");
-            payload.put("deviceId", deviceId);
-            JSONObject groupsObj = new JSONObject();
-
             for (int i = 0; i < reqGroups.length(); i++) {
                 String gid = reqGroups.getString(i);
                 String since = checkpoints.optString(gid, "000000000000000-0000-0000");
 
-                JSONObject gData = new JSONObject();
-                gData.put("info", db.getGroup(gid));
-                gData.put("members", db.listMembers(gid));
+                JSONObject header = new JSONObject();
+                header.put("type", "SYNC_DATA_HEADER");
+                header.put("deviceId", deviceId);
+                header.put("groupId", gid);
+                header.put("info", db.getGroup(gid));
+                header.put("members", db.listMembers(gid));
+                sendPayload(endpointId, header);
 
                 JSONArray allExpenses = db.listExpenses(gid, true);
                 JSONArray filtered = new JSONArray();
@@ -402,13 +421,47 @@ public class NearbySyncService {
                         filtered.put(exp);
                     }
                 }
-                gData.put("expenses", filtered);
-                groupsObj.put(gid, gData);
+                sendExpensesInChunks(endpointId, gid, filtered);
             }
-            payload.put("groups", groupsObj);
-            sendPayload(endpointId, payload);
         } catch (Exception e) {
             Log.e(TAG, "Error handling SYNC_REQUEST", e);
+        }
+    }
+
+    private void handleSyncHeader(JSONObject msg) {
+        try {
+            String gid = msg.getString("groupId");
+            JSONObject info = msg.optJSONObject("info");
+            if (info != null) {
+                db.upsertGroupInfo(gid, info.getString("name"), info.getString("created_by"), info.getString("created_at"));
+            }
+            JSONArray members = msg.optJSONArray("members");
+            if (members != null) {
+                for (int i = 0; i < members.length(); i++) {
+                    JSONObject m = members.getJSONObject(i);
+                    db.upsertMember(m.optString("id", null), gid, m.getString("name"), m.getString("device_id"), m.optString("joined_at", null));
+                }
+            }
+            mainHandler.post(() -> listener.onDataMerged(1));
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling SYNC_DATA_HEADER", e);
+        }
+    }
+
+    private void handleSyncChunk(JSONObject msg) {
+        try {
+            String gid = msg.getString("groupId");
+            String remoteDeviceId = msg.getString("deviceId");
+            JSONArray expenses = msg.optJSONArray("expenses");
+            int merged = 0;
+            if (expenses != null && expenses.length() > 0) {
+                merged = db.mergeExpensesBatch(hlcClock, gid, expenses);
+                db.updateCheckpoint(gid, remoteDeviceId, hlcClock.tick());
+            }
+            final int count = merged;
+            mainHandler.post(() -> listener.onDataMerged(count));
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling SYNC_DATA_CHUNK", e);
         }
     }
 
@@ -434,9 +487,9 @@ public class NearbySyncService {
                     db.upsertMember(m.optString("id", null), gid, m.getString("name"), m.getString("device_id"), m.optString("joined_at", null));
                 }
 
-                JSONArray expenses = gData.getJSONArray("expenses");
-                for (int i = 0; i < expenses.length(); i++) {
-                    totalMerged += db.mergeExpense(hlcClock, gid, expenses.getJSONObject(i));
+                JSONArray expenses = gData.optJSONArray("expenses");
+                if (expenses != null && expenses.length() > 0) {
+                    totalMerged += db.mergeExpensesBatch(hlcClock, gid, expenses);
                 }
 
                 db.updateCheckpoint(gid, remoteDeviceId, hlcClock.tick());

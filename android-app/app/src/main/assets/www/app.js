@@ -23,6 +23,7 @@ const state = {
   wsConnected: false,
   deferredInstallPrompt: null,
   pendingSettlement: null,
+  editingExpenseId: null,
   categoryFilter: 'ALL',
   searchQuery: '',
   splitMode: 'EQUAL', // 'EQUAL' or 'CUSTOM'
@@ -144,15 +145,28 @@ const el = {
   // Modals
   modalAddExpense: document.getElementById('modal-add-expense'),
   formAddExpense: document.getElementById('form-add-expense'),
+  modalExpenseTitle: document.getElementById('modal-expense-title'),
+  btnSubmitExpense: document.getElementById('btn-submit-expense'),
   expDesc: document.getElementById('exp-desc'),
   expAmount: document.getElementById('exp-amount'),
   expDate: document.getElementById('exp-date'),
   expCategory: document.getElementById('exp-category'),
+  expPaidByLabel: document.getElementById('exp-paid-by-label'),
   expPaidBy: document.getElementById('exp-paid-by'),
+  groupSplitMethod: document.getElementById('group-split-method'),
   expSplitCheckboxes: document.getElementById('exp-split-checkboxes'),
   expCustomSplitContainer: document.getElementById('exp-custom-split-container'),
+  expCustomSplitInputs: document.getElementById('exp-custom-split-inputs'),
   btnSplitEqual: document.getElementById('btn-split-equal'),
   btnSplitCustom: document.getElementById('btn-split-custom'),
+
+  // Split Math Bar
+  splitMathBar: document.getElementById('split-math-bar'),
+  mathTotal: document.getElementById('math-total'),
+  mathAllocated: document.getElementById('math-allocated'),
+  mathRemaining: document.getElementById('math-remaining'),
+  btnAutoSplitRemaining: document.getElementById('btn-auto-split-remaining'),
+  btnResetEqualShares: document.getElementById('btn-reset-equal-shares'),
 
   modalCreateGroup: document.getElementById('modal-create-group'),
   formCreateGroup: document.getElementById('form-create-group'),
@@ -183,7 +197,6 @@ const el = {
 
   modalSettleUp: document.getElementById('modal-settle-up'),
   settleSummaryText: document.getElementById('settle-summary-text'),
-  btnPayUpi: document.getElementById('btn-pay-upi'),
   btnConfirmSettle: document.getElementById('btn-confirm-settle'),
 
   toast: document.getElementById('toast'),
@@ -340,14 +353,17 @@ const isNativeApp = typeof window.AndroidBridge !== 'undefined';
 
 if (isNativeApp) {
   window.onSyncUpdate = function(eventType) {
-    refreshData();
-    if (state.activeGroupId) {
-      loadGroupDetail(state.activeGroupId, false);
+    if (eventType === 'DATA_MERGED') {
+      refreshData();
+      if (state.activeGroupId) {
+        loadGroupDetail(state.activeGroupId, false);
+      }
+      if (state.activeView === 'view-activity') {
+        loadActivityFeed();
+      }
+    } else if (eventType && eventType.includes('PEER')) {
+      loadInfo();
     }
-    if (state.activeView === 'view-activity') {
-      loadActivityFeed();
-    }
-    showToast('Database synced via Mesh');
   };
 
   window.onGroupJoinedViaQr = async function(groupId) {
@@ -405,6 +421,19 @@ async function fetchApi(endpoint, options = {}) {
       if (matchDelExp && options.method === 'DELETE') {
         window.AndroidBridge.deleteExpense(matchDelExp[1], matchDelExp[2]);
         return { success: true };
+      }
+      if (matchDelExp && options.method === 'PUT') {
+        const body = JSON.parse(options.body || '{}');
+        return JSON.parse(window.AndroidBridge.updateExpense(
+          matchDelExp[1],
+          matchDelExp[2],
+          body.description,
+          body.amount,
+          body.paidBy,
+          JSON.stringify(body.splitBetween || []),
+          body.category || 'General',
+          body.date || ''
+        ));
       }
       const matchSettle = endpoint.match(/^\/api\/groups\/([a-zA-Z0-9_-]+)\/settle$/);
       if (matchSettle && options.method === 'POST') {
@@ -502,11 +531,9 @@ function connectWebSocket() {
     };
     state.ws.onmessage = (event) => {
       try {
-        const msg = JSON.parse(event.data);
         refreshData();
         if (state.activeGroupId) loadGroupDetail(state.activeGroupId, false);
         if (state.activeView === 'view-activity') loadActivityFeed();
-        showToast('Database synced across Wi-Fi');
       } catch (_) {}
     };
     state.ws.onclose = () => {
@@ -720,6 +747,55 @@ function updateHeroBalance(totalOwed, totalOwe) {
     el.heroBalance.textContent = '₹0.00';
   }
 }
+        <div class="group-balance-status" style="color: var(--primary);">you are owed</div>
+        <div class="group-balance-amount" style="color: var(--primary);">${formatMoney(myBalance)}</div>
+      `;
+    } else if (myBalance < -0.01) {
+      balanceHtml = `
+        <div class="group-balance-status" style="color: var(--rose);">you owe</div>
+        <div class="group-balance-amount" style="color: var(--rose);">${formatMoney(myBalance)}</div>
+      `;
+    } else {
+      balanceHtml = `
+        <div class="group-balance-status">settled</div>
+        <div class="group-balance-amount" style="color: var(--text-dim);">₹0.00</div>
+      `;
+    }
+
+    html += `
+      <div class="group-card" onclick="openGroupDetail('${g.id}')">
+        <div class="group-info">
+          <div class="group-avatar">${escapeHtml((g.name || 'G')[0]).toUpperCase()}</div>
+          <div>
+            <div class="group-name">${escapeHtml(g.name)}</div>
+            <div class="group-meta">${g.members ? g.members.length : 0} members • ${g.expenseCount || 0} expenses</div>
+          </div>
+        </div>
+        <div class="group-balance">${balanceHtml}</div>
+      </div>
+    `;
+  }
+
+  el.groupListContainer.innerHTML = html;
+  updateHeroBalance(totalOwed, totalOwe);
+}
+
+function updateHeroBalance(totalOwed, totalOwe) {
+  const net = totalOwed - totalOwe;
+  el.heroOwed.textContent = formatMoney(totalOwed);
+  el.heroOwe.textContent = formatMoney(totalOwe);
+
+  if (net > 0.01) {
+    el.heroBalance.className = 'hero-balance positive';
+    el.heroBalance.textContent = `+${formatMoney(net)}`;
+  } else if (net < -0.01) {
+    el.heroBalance.className = 'hero-balance negative';
+    el.heroBalance.textContent = `-${formatMoney(net)}`;
+  } else {
+    el.heroBalance.className = 'hero-balance zero';
+    el.heroBalance.textContent = '₹0.00';
+  }
+}
 
 // -------------------------------------------------------------
 // 8. Group Detail View (Categories, Dates, Filters, Balances)
@@ -858,7 +934,10 @@ function renderExpensesList(expenses, members) {
         </div>
         <div class="expense-right">
           <div class="expense-amount">${formatMoney(e.amount)}</div>
-          <button class="btn-del" onclick="deleteExpense('${e.id}')" title="Delete expense">&times;</button>
+          <div class="expense-actions">
+            <button class="btn-action btn-edit" onclick="openEditExpenseModal('${e.id}')" title="Edit">✏️</button>
+            <button class="btn-action btn-del" onclick="deleteExpense('${e.id}')" title="Delete">&times;</button>
+          </div>
         </div>
       </div>
     `;
@@ -974,18 +1053,21 @@ function renderGroupQrCode(group) {
 // -------------------------------------------------------------
 
 function setupAddExpenseModal() {
+  state.editingExpenseId = null;
   const data = state.currentGroupData;
   if (!data || !data.members) return;
 
   const myDeviceId = state.info && state.info.deviceId;
   const myDevName = state.info && state.info.deviceName;
 
+  if (el.modalExpenseTitle) el.modalExpenseTitle.textContent = 'Add an Expense';
+  if (el.btnSubmitExpense) el.btnSubmitExpense.textContent = 'Save Expense';
+
   el.expDesc.value = '';
   el.expAmount.value = '';
   el.expDate.value = new Date().toISOString().split('T')[0];
   el.expCategory.value = 'General';
   state.splitMode = 'EQUAL';
-  updateSplitModeUI();
 
   el.expPaidBy.innerHTML = data.members
     .map((m) => {
@@ -1015,7 +1097,141 @@ function setupAddExpenseModal() {
     )
     .join('');
 
+  updateSplitModeUI();
   openModal('modal-add-expense');
+}
+
+function openEditExpenseModal(expenseId) {
+  const data = state.currentGroupData;
+  if (!data || !data.expenses) return;
+
+  const expense = data.expenses.find((e) => e.id === expenseId);
+  if (!expense) return;
+
+  state.editingExpenseId = expenseId;
+  const isPayment = (expense.category === 'Payment') || (expense.description && expense.description.startsWith('Payment'));
+
+  if (el.modalExpenseTitle) el.modalExpenseTitle.textContent = isPayment ? 'Edit Payment' : 'Edit Expense';
+  if (el.btnSubmitExpense) el.btnSubmitExpense.textContent = isPayment ? 'Update Payment' : 'Update Expense';
+
+  el.expDesc.value = expense.description || '';
+  el.expAmount.value = expense.amount || '';
+  el.expDate.value = expense.date || new Date().toISOString().split('T')[0];
+  el.expCategory.value = expense.category || (isPayment ? 'Payment' : 'General');
+
+  const myDeviceId = state.info && state.info.deviceId;
+  const myDevName = state.info && state.info.deviceName;
+
+  el.expPaidBy.innerHTML = (data.members || [])
+    .map((m) => {
+      const isMe = myDeviceId && m.device_id === myDeviceId;
+      const displayName = isMe && myDevName ? myDevName : m.name;
+      return `<option value="${m.id}">${escapeHtml(displayName)}${isMe ? ' (You)' : ''}</option>`;
+    })
+    .join('');
+
+  el.expPaidBy.value = expense.paid_by;
+
+  // Determine split mode & prefill
+  const split = expense.split_between || [];
+  let isCustom = false;
+  const customMap = {};
+
+  for (const item of split) {
+    if (typeof item === 'object' && item !== null && item.memberId) {
+      isCustom = true;
+      customMap[item.memberId] = item.share;
+    }
+  }
+
+  if (isCustom) {
+    state.splitMode = 'CUSTOM';
+    updateSplitModeUI();
+    (data.members || []).forEach((m) => {
+      const inp = document.getElementById(`custom-share-${m.id}`);
+      if (inp) {
+        inp.value = (customMap[m.id] !== undefined ? customMap[m.id] : 0).toFixed(2);
+      }
+    });
+    updateSplitMath();
+  } else {
+    state.splitMode = 'EQUAL';
+    updateSplitModeUI();
+    const splitMemberSet = new Set(split.map((s) => (typeof s === 'object' ? s.memberId : s)));
+    document.querySelectorAll('input[name="splitMember"]').forEach((cb) => {
+      cb.checked = splitMemberSet.size === 0 || splitMemberSet.has(cb.value);
+    });
+  }
+
+  openModal('modal-add-expense');
+}
+
+function updateSplitMath() {
+  if (state.splitMode !== 'CUSTOM') return;
+  const total = parseFloat(el.expAmount.value) || 0;
+  const inputs = el.expCustomSplitInputs ? el.expCustomSplitInputs.querySelectorAll('input') : [];
+  let allocated = 0;
+  inputs.forEach((inp) => {
+    allocated += parseFloat(inp.value) || 0;
+  });
+  allocated = Math.round(allocated * 100) / 100;
+  const remaining = Math.round((total - allocated) * 100) / 100;
+
+  if (el.mathTotal) el.mathTotal.textContent = formatMoney(total);
+  if (el.mathAllocated) el.mathAllocated.textContent = formatMoney(allocated);
+  if (el.mathRemaining) {
+    if (Math.abs(remaining) < 0.01) {
+      el.mathRemaining.textContent = '₹0.00 (Balanced ✅)';
+      el.mathRemaining.className = 'split-math-val balanced';
+    } else if (remaining > 0) {
+      el.mathRemaining.textContent = `+${formatMoney(remaining)} left`;
+      el.mathRemaining.className = 'split-math-val under';
+    } else {
+      el.mathRemaining.textContent = `-${formatMoney(Math.abs(remaining))} over`;
+      el.mathRemaining.className = 'split-math-val over';
+    }
+  }
+}
+
+function autoSplitRemaining() {
+  const total = parseFloat(el.expAmount.value) || 0;
+  const inputs = el.expCustomSplitInputs ? Array.from(el.expCustomSplitInputs.querySelectorAll('input')) : [];
+  if (inputs.length === 0) return;
+
+  let allocated = 0;
+  inputs.forEach((inp) => {
+    allocated += parseFloat(inp.value) || 0;
+  });
+  const remaining = Math.round((total - allocated) * 100) / 100;
+
+  if (Math.abs(remaining) < 0.01) {
+    showToast('Shares are already balanced!');
+    return;
+  }
+
+  const lastInput = inputs[inputs.length - 1];
+  const currentVal = parseFloat(lastInput.value) || 0;
+  const newVal = Math.max(0, Math.round((currentVal + remaining) * 100) / 100);
+  lastInput.value = newVal.toFixed(2);
+  updateSplitMath();
+}
+
+function resetEqualShares() {
+  const members = (state.currentGroupData && state.currentGroupData.members) || [];
+  const total = parseFloat(el.expAmount.value) || 0;
+  if (members.length === 0) return;
+
+  const shareEach = Math.floor((total / members.length) * 100) / 100;
+  const remainder = Math.round((total - shareEach * members.length) * 100) / 100;
+
+  members.forEach((m, idx) => {
+    const inp = document.getElementById(`custom-share-${m.id}`);
+    if (inp) {
+      const val = idx === members.length - 1 ? shareEach + remainder : shareEach;
+      inp.value = val.toFixed(2);
+    }
+  });
+  updateSplitMath();
 }
 
 function updateSplitModeUI() {
@@ -1034,16 +1250,23 @@ function updateSplitModeUI() {
     const total = parseFloat(el.expAmount.value) || 0;
     const shareEach = members.length > 0 ? (total / members.length).toFixed(2) : 0;
 
-    el.expCustomSplitContainer.innerHTML = members
-      .map(
-        (m) => `
-      <div class="custom-split-row">
-        <span class="custom-split-name">${escapeHtml(m.name)}</span>
-        <input type="number" step="0.01" class="custom-split-input" id="custom-share-${m.id}" value="${shareEach}">
-      </div>
-    `
-      )
-      .join('');
+    if (el.expCustomSplitInputs) {
+      el.expCustomSplitInputs.innerHTML = members
+        .map(
+          (m) => `
+        <div class="custom-split-row">
+          <span class="custom-split-name">${escapeHtml(m.name)}</span>
+          <input type="number" step="0.01" class="custom-split-input" id="custom-share-${m.id}" value="${shareEach}">
+        </div>
+      `
+        )
+        .join('');
+
+      el.expCustomSplitInputs.querySelectorAll('input').forEach((inp) => {
+        inp.addEventListener('input', updateSplitMath);
+      });
+    }
+    updateSplitMath();
   }
 }
 
@@ -1058,8 +1281,11 @@ safeOn(el.btnSplitCustom, 'click', () => {
 });
 
 safeOn(el.expAmount, 'input', () => {
-  if (state.splitMode === 'CUSTOM') updateSplitModeUI();
+  if (state.splitMode === 'CUSTOM') updateSplitMath();
 });
+
+safeOn(el.btnAutoSplitRemaining, 'click', autoSplitRemaining);
+safeOn(el.btnResetEqualShares, 'click', resetEqualShares);
 
 safeOn(el.fabAddExpense, 'click', setupAddExpenseModal);
 
@@ -1081,37 +1307,69 @@ safeOn(el.formAddExpense, 'submit', async (e) => {
     }
   } else {
     const members = (state.currentGroupData && state.currentGroupData.members) || [];
+    let allocatedTotal = 0;
     splitBetween = members.map((m) => {
       const inp = document.getElementById(`custom-share-${m.id}`);
       const shareVal = parseFloat(inp ? inp.value : 0) || 0;
+      allocatedTotal += shareVal;
       return { memberId: m.id, share: shareVal };
     });
+
+    allocatedTotal = Math.round(allocatedTotal * 100) / 100;
+    const diff = Math.round((amount - allocatedTotal) * 100) / 100;
+    if (Math.abs(diff) > 0.05) {
+      const autoAdjust = confirm(
+        `Shares total (${formatMoney(allocatedTotal)}) does not match expense amount (${formatMoney(amount)}).\nDifference: ${formatMoney(diff)}.\n\nWould you like to automatically adjust the difference to the last member?`
+      );
+      if (autoAdjust) {
+        autoSplitRemaining();
+        splitBetween = members.map((m) => {
+          const inp = document.getElementById(`custom-share-${m.id}`);
+          return { memberId: m.id, share: parseFloat(inp ? inp.value : 0) || 0 };
+        });
+      } else {
+        return;
+      }
+    }
   }
 
   closeModal('modal-add-expense');
 
-  const res = await fetchApi(`/api/groups/${state.activeGroupId}/expenses`, {
-    method: 'POST',
-    body: JSON.stringify({ description, amount, paidBy, splitBetween, category, date }),
-  });
+  let res;
+  if (state.editingExpenseId) {
+    res = await fetchApi(`/api/groups/${state.activeGroupId}/expenses/${state.editingExpenseId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ description, amount, paidBy, splitBetween, category, date }),
+    });
+    if (res) {
+      showToast('Expense updated & synced');
+    }
+  } else {
+    res = await fetchApi(`/api/groups/${state.activeGroupId}/expenses`, {
+      method: 'POST',
+      body: JSON.stringify({ description, amount, paidBy, splitBetween, category, date }),
+    });
+    if (res) {
+      showToast('Expense recorded & synced');
+    }
+  }
 
+  state.editingExpenseId = null;
   if (res) {
-    showToast('Expense recorded & synced');
     await loadGroupDetail(state.activeGroupId, false);
     refreshData();
+    if (state.activeView === 'view-activity') {
+      loadActivityFeed();
+    }
   }
 });
 
-// Settle Up Handler with UPI Link
+// Settle Up Handler (Direct Ledger Settlement — No Broken External Redirects)
 function promptSettleUp(payerId, receiverId, amount, payerName, receiverName) {
   state.pendingSettlement = { payerId, receiverId, amount };
-  el.settleSummaryText.textContent = `${payerName} pays ${formatMoney(amount)} to ${receiverName}`;
-
-  if (el.btnPayUpi) {
-    el.btnPayUpi.href = `upi://pay?pn=${encodeURIComponent(receiverName)}&am=${amount.toFixed(2)}&cu=INR&tn=${encodeURIComponent('Splitwise P2P Settlement')}`;
-    el.btnPayUpi.style.display = 'flex';
+  if (el.settleSummaryText) {
+    el.settleSummaryText.textContent = `${payerName} pays ${formatMoney(amount)} to ${receiverName}`;
   }
-
   openModal('modal-settle-up');
 }
 
@@ -1133,6 +1391,9 @@ safeOn(el.btnConfirmSettle, 'click', async () => {
     showToast('Settlement recorded in ledger');
     await loadGroupDetail(state.activeGroupId, false);
     refreshData();
+    if (state.activeView === 'view-activity') {
+      loadActivityFeed();
+    }
   }
 });
 
@@ -1145,6 +1406,9 @@ async function deleteExpense(expenseId) {
     showToast('Expense deleted');
     await loadGroupDetail(state.activeGroupId, false);
     refreshData();
+    if (state.activeView === 'view-activity') {
+      loadActivityFeed();
+    }
   }
 }
 
@@ -1691,6 +1955,11 @@ window.filterActivityByGroup = filterActivityByGroup;
 window.checkForUpdates = checkForUpdates;
 window.openUpdateModal = openUpdateModal;
 window.performAppUpdate = performAppUpdate;
+window.openEditExpenseModal = openEditExpenseModal;
+window.deleteExpense = deleteExpense;
+window.promptSettleUp = promptSettleUp;
+window.autoSplitRemaining = autoSplitRemaining;
+window.resetEqualShares = resetEqualShares;
 
 safeOn(el.btnPerformUpdate, 'click', performAppUpdate);
 safeOn(el.btnHeaderUpdate, 'click', openUpdateModal);

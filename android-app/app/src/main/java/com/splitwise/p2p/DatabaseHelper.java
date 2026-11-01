@@ -354,6 +354,38 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         db.update("expenses", cv, "id = ?", new String[]{expenseId});
     }
 
+    public JSONObject updateExpense(HlcClock clock, String expenseId, String desc, double amount, String paidBy, JSONArray splitBetween, String category, String date, String deviceId) {
+        SQLiteDatabase db = getWritableDatabase();
+        String hlc = clock.tick();
+        String expDate = date != null && !date.isEmpty() ? date : todayDate();
+        String cat = category != null && !category.isEmpty() ? category : "General";
+
+        ContentValues cv = new ContentValues();
+        cv.put("description", desc);
+        cv.put("amount", amount);
+        cv.put("paid_by", paidBy);
+        cv.put("split_between", splitBetween.toString());
+        cv.put("category", cat);
+        cv.put("date", expDate);
+        cv.put("updated_hlc", hlc);
+        db.update("expenses", cv, "id = ?", new String[]{expenseId});
+
+        try {
+            JSONObject exp = new JSONObject();
+            exp.put("id", expenseId);
+            exp.put("description", desc);
+            exp.put("amount", amount);
+            exp.put("paid_by", paidBy);
+            exp.put("split_between", splitBetween);
+            exp.put("category", cat);
+            exp.put("date", expDate);
+            exp.put("updated_hlc", hlc);
+            return exp;
+        } catch (Exception e) {
+            return new JSONObject();
+        }
+    }
+
     public JSONArray listExpenses(String groupId, boolean includeDeleted) {
         SQLiteDatabase db = getReadableDatabase();
         JSONArray arr = new JSONArray();
@@ -734,6 +766,64 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         cv.put("peer_device_id", peerDeviceId);
         cv.put("last_seen_hlc", hlc);
         db.insertWithOnConflict("sync_state", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    public int mergeExpensesBatch(HlcClock clock, String groupId, JSONArray expenses) {
+        SQLiteDatabase db = getWritableDatabase();
+        int merged = 0;
+        db.beginTransaction();
+        try {
+            for (int i = 0; i < expenses.length(); i++) {
+                try {
+                    JSONObject incoming = expenses.getJSONObject(i);
+                    String expId = incoming.getString("id");
+                    String incomingHlc = incoming.getString("updated_hlc");
+
+                    clock.update(incomingHlc);
+
+                    Cursor c = db.rawQuery("SELECT updated_hlc FROM expenses WHERE id = ?", new String[]{expId});
+                    boolean exists = c.moveToFirst();
+                    if (!exists) {
+                        c.close();
+                        ContentValues cv = new ContentValues();
+                        cv.put("id", expId);
+                        cv.put("group_id", groupId);
+                        cv.put("description", incoming.getString("description"));
+                        cv.put("amount", incoming.getDouble("amount"));
+                        cv.put("paid_by", incoming.getString("paid_by"));
+                        cv.put("split_between", incoming.get("split_between").toString());
+                        cv.put("category", incoming.optString("category", "General"));
+                        cv.put("date", incoming.optString("date", todayDate()));
+                        cv.put("created_by_device", incoming.getString("created_by_device"));
+                        cv.put("hlc", incoming.getString("hlc"));
+                        cv.put("deleted", incoming.optBoolean("deleted", false) ? 1 : 0);
+                        cv.put("updated_hlc", incomingHlc);
+                        db.insert("expenses", null, cv);
+                        merged++;
+                    } else {
+                        String localHlc = c.getString(0);
+                        c.close();
+                        if (HlcClock.compare(incomingHlc, localHlc) > 0) {
+                            ContentValues cv = new ContentValues();
+                            cv.put("description", incoming.getString("description"));
+                            cv.put("amount", incoming.getDouble("amount"));
+                            cv.put("paid_by", incoming.getString("paid_by"));
+                            cv.put("split_between", incoming.get("split_between").toString());
+                            cv.put("category", incoming.optString("category", "General"));
+                            cv.put("date", incoming.optString("date", todayDate()));
+                            cv.put("deleted", incoming.optBoolean("deleted", false) ? 1 : 0);
+                            cv.put("updated_hlc", incomingHlc);
+                            db.update("expenses", cv, "id = ?", new String[]{expId});
+                            merged++;
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+        return merged;
     }
 
     public int mergeExpense(HlcClock clock, String groupId, JSONObject incoming) {

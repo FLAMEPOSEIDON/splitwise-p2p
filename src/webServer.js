@@ -124,7 +124,7 @@ class WebServer {
 
     // CORS Headers for local network discovery & testing
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') {
@@ -406,6 +406,38 @@ class WebServer {
       expenses.deleteExpense(this.hlcClock, expenseId);
       this.broadcastUpdate('EXPENSE_DELETED', { groupId, expenseId });
       sendJson(200, { success: true });
+      return;
+    }
+
+    // PUT /api/groups/:id/expenses/:expenseId (Edit expense or payment)
+    if (delExpenseMatch && req.method === 'PUT') {
+      const groupId = delExpenseMatch[1];
+      const expenseId = delExpenseMatch[2];
+
+      parseBody((err, body) => {
+        if (err || !body.description || !body.amount || !body.paidBy || !body.splitBetween) {
+          sendJson(400, { error: 'Invalid expense parameters' });
+          return;
+        }
+        const amount = parseFloat(body.amount);
+        if (isNaN(amount) || amount <= 0) {
+          sendJson(400, { error: 'Amount must be a positive number' });
+          return;
+        }
+
+        const updated = expenses.updateExpense(this.hlcClock, expenseId, {
+          description: body.description,
+          amount,
+          paidBy: body.paidBy,
+          splitBetween: body.splitBetween,
+          category: body.category || 'General',
+          date: body.date || null,
+          deviceId: this.deviceId,
+        });
+
+        this.broadcastUpdate('EXPENSE_UPDATED', { groupId, expense: updated });
+        sendJson(200, updated);
+      });
       return;
     }
 

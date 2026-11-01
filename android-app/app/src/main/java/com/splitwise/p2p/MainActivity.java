@@ -153,7 +153,16 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                 return true;
             }
         });
-        webView.setWebViewClient(new WebViewClient());
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                String url = request.getUrl().toString();
+                if (url.startsWith("file:") || url.startsWith("http://127.0.0.1") || url.startsWith("http://localhost")) {
+                    return false;
+                }
+                return true; // Prevent WebView from redirecting to broken external pages
+            }
+        });
 
         // Attach Android Native Bridge to JavaScript
         webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
@@ -387,6 +396,19 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
             try {
                 JSONArray split = new JSONArray(splitBetweenJson);
                 JSONObject exp = dbHelper.addExpense(hlcClock, groupId, desc, amount, paidBy, split, category, date, deviceId);
+                if (syncService != null) syncService.broadcastSync();
+                if (nearbySyncService != null) nearbySyncService.broadcastSync();
+                return exp.toString();
+            } catch (Exception e) {
+                return "{}";
+            }
+        }
+
+        @JavascriptInterface
+        public String updateExpense(String groupId, String expenseId, String desc, double amount, String paidBy, String splitBetweenJson, String category, String date) {
+            try {
+                JSONArray split = new JSONArray(splitBetweenJson);
+                JSONObject exp = dbHelper.updateExpense(hlcClock, expenseId, desc, amount, paidBy, split, category, date, deviceId);
                 if (syncService != null) syncService.broadcastSync();
                 if (nearbySyncService != null) nearbySyncService.broadcastSync();
                 return exp.toString();

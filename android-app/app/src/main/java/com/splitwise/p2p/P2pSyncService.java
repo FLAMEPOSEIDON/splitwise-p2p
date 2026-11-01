@@ -325,9 +325,9 @@ public class P2pSyncService {
                     db.upsertMember(m.optString("id", null), gid, m.getString("name"), m.getString("device_id"), m.optString("joined_at", null));
                 }
 
-                JSONArray expenses = gData.getJSONArray("expenses");
-                for (int i = 0; i < expenses.length(); i++) {
-                    totalMerged += db.mergeExpense(hlcClock, gid, expenses.getJSONObject(i));
+                JSONArray expenses = gData.optJSONArray("expenses");
+                if (expenses != null && expenses.length() > 0) {
+                    totalMerged += db.mergeExpensesBatch(hlcClock, gid, expenses);
                 }
 
                 db.updateCheckpoint(gid, remoteDeviceId, hlcClock.tick());
