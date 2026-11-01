@@ -323,6 +323,18 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         db.insertWithOnConflict("groups", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
     }
 
+    public void deleteGroup(String groupId) {
+        if (groupId == null || groupId.trim().isEmpty()) return;
+        SQLiteDatabase db = getWritableDatabase();
+        String groupName = getGroupName(groupId);
+        db.delete("expenses", "group_id = ?", new String[]{groupId});
+        db.delete("members", "group_id = ?", new String[]{groupId});
+        db.delete("sync_state", "group_id = ?", new String[]{groupId});
+        db.delete("activity_log", "group_id = ?", new String[]{groupId});
+        db.delete("groups", "id = ?", new String[]{groupId});
+        logActivity("", "GROUP_DELETED", "🗑️", "Group deleted", "\"" + groupName + "\" and all its data were deleted", null, 0, nowIso(), todayDate());
+    }
+
     public JSONArray listGroups(String myDeviceId) {
         SQLiteDatabase db = getReadableDatabase();
         JSONArray arr = new JSONArray();

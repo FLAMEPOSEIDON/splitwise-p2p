@@ -89,6 +89,17 @@ function updateGroupInfo(groupId, name, createdBy, createdAt) {
   ).run(name, createdBy, createdAt, groupId);
 }
 
+function deleteGroup(groupId) {
+  if (!groupId) return;
+  const gName = getGroupName(groupId);
+  db.prepare('DELETE FROM expenses WHERE group_id = ?').run(groupId);
+  db.prepare('DELETE FROM members WHERE group_id = ?').run(groupId);
+  db.prepare('DELETE FROM sync_state WHERE group_id = ?').run(groupId);
+  db.prepare('DELETE FROM activity_log WHERE group_id = ?').run(groupId);
+  db.prepare('DELETE FROM groups WHERE id = ?').run(groupId);
+  logActivity('', 'GROUP_DELETED', '🗑️', 'Group deleted', `"${gName}" and all its data were deleted`, null, 0, new Date().toISOString(), new Date().toISOString().split('T')[0]);
+}
+
 function getGroup(groupId) {
   return db.prepare(`SELECT * FROM groups WHERE id = ?`).get(groupId);
 }
@@ -801,6 +812,7 @@ function getActivityFeed(limit = 100, targetGroupId = null) {
 
 module.exports = {
   createGroup,
+  deleteGroup,
   joinGroupStub,
   updateGroupInfo,
   addMember,

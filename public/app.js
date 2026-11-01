@@ -132,6 +132,7 @@ const el = {
   btnShowGroupQr: document.getElementById('btn-show-group-qr'),
   btnImportCsvDetail: document.getElementById('btn-import-csv-detail'),
   btnExportCsv: document.getElementById('btn-export-csv'),
+  btnDeleteGroup: document.getElementById('btn-delete-group'),
 
   tabContentExpenses: document.getElementById('tab-content-expenses'),
   tabContentBalances: document.getElementById('tab-content-balances'),
@@ -310,13 +311,48 @@ function safeOn(element, event, handler) {
 
 function openModal(modalId) {
   const m = document.getElementById(modalId);
-  if (m) m.classList.add('open');
+  if (m) {
+    m.classList.add('open');
+    try {
+      history.pushState({ modal: modalId }, '', '');
+    } catch (_) {}
+  }
 }
 
 function closeModal(modalId) {
   const m = document.getElementById(modalId);
   if (m) m.classList.remove('open');
 }
+
+function handleAndroidBack() {
+  // 1. If any modal is currently open, close it!
+  const openModals = document.querySelectorAll('.modal-overlay.open');
+  if (openModals && openModals.length > 0) {
+    openModals.forEach((m) => m.classList.remove('open'));
+    return 'handled';
+  }
+
+  // 2. If in group detail view, navigate back to groups list!
+  if (state.activeView === 'view-group-detail') {
+    switchView('view-groups', true);
+    return 'handled';
+  }
+
+  // 3. If in any other secondary tab, navigate back to groups list!
+  if (state.activeView !== 'view-groups') {
+    switchView('view-groups', true);
+    return 'handled';
+  }
+
+  // 4. On root view with no modal open -> return 'unhandled' so native handles 2-tap exit
+  return 'unhandled';
+}
+
+window.handleAndroidBack = handleAndroidBack;
+
+window.addEventListener('popstate', () => {
+  handleAndroidBack();
+});
 
 window.openModal = openModal;
 window.closeModal = closeModal;
@@ -335,13 +371,19 @@ window.addEventListener('click', (e) => {
   }
 });
 
-function switchView(viewId) {
+function switchView(viewId, isBack = false) {
   state.activeView = viewId;
   const views = ['view-groups', 'view-activity', 'view-group-detail', 'view-network', 'view-cert', 'view-mongo'];
   views.forEach((v) => {
     const elem = document.getElementById(v);
     if (elem) elem.style.display = v === viewId ? 'block' : 'none';
   });
+
+  if (!isBack) {
+    try {
+      history.pushState({ view: viewId }, '', '');
+    } catch (_) {}
+  }
 
   if (viewId === 'view-activity') {
     loadActivityFeed();
@@ -420,6 +462,10 @@ async function fetchApi(endpoint, options = {}) {
       const matchDetail = endpoint.match(/^\/api\/groups\/([a-zA-Z0-9_-]+)$/);
       if (matchDetail && (!options.method || options.method === 'GET')) {
         return JSON.parse(window.AndroidBridge.getGroupDetail(matchDetail[1]));
+      }
+      if (matchDetail && options.method === 'DELETE') {
+        window.AndroidBridge.deleteGroup(matchDetail[1]);
+        return { success: true };
       }
       const matchAddExp = endpoint.match(/^\/api\/groups\/([a-zA-Z0-9_-]+)\/expenses$/);
       if (matchAddExp && options.method === 'POST') {
@@ -1435,6 +1481,27 @@ async function deleteExpense(expenseId) {
     }
   }
 }
+
+async function deleteCurrentGroup() {
+  if (!state.activeGroupId) return;
+  const groupName = (state.currentGroupData && state.currentGroupData.group && state.currentGroupData.group.name) || 'this group';
+  const confirmed = confirm(`Are you sure you want to delete "${groupName}"?\n\nAll expenses, balances, and history for this group will be permanently deleted.`);
+  if (!confirmed) return;
+
+  const res = await fetchApi(`/api/groups/${state.activeGroupId}`, {
+    method: 'DELETE',
+  });
+  if (res) {
+    showToast(`Group "${groupName}" deleted`);
+    state.activeGroupId = null;
+    state.currentGroupData = null;
+    switchView('view-groups');
+    await refreshData();
+  }
+}
+
+safeOn(el.btnDeleteGroup, 'click', deleteCurrentGroup);
+window.deleteCurrentGroup = deleteCurrentGroup;
 
 // -------------------------------------------------------------
 // 10. Splitwise CSV Import & Export

@@ -361,6 +361,28 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         });
     }
 
+    private long lastBackPressTime = 0;
+
+    @Override
+    public void onBackPressed() {
+        if (webView != null) {
+            webView.evaluateJavascript("if (typeof window.handleAndroidBack === 'function') { window.handleAndroidBack(); } else { 'unhandled'; }", value -> {
+                if ("\"handled\"".equals(value) || "true".equals(value)) {
+                    return; // Handled internally (modal closed or moved back to groups list)
+                }
+                long now = System.currentTimeMillis();
+                if (now - lastBackPressTime < 2000) {
+                    finish();
+                } else {
+                    lastBackPressTime = now;
+                    Toast.makeText(MainActivity.this, "Press back again to exit", Toast.LENGTH_SHORT).show();
+                }
+            });
+        } else {
+            super.onBackPressed();
+        }
+    }
+
     @Override
     protected void onDestroy() {
         super.onDestroy();
@@ -430,6 +452,13 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
             if (syncService != null) syncService.broadcastSync();
             if (nearbySyncService != null) nearbySyncService.broadcastSync();
             return "{\"success\": true}";
+        }
+
+        @JavascriptInterface
+        public void deleteGroup(String groupId) {
+            dbHelper.deleteGroup(groupId);
+            if (syncService != null) syncService.broadcastSync();
+            if (nearbySyncService != null) nearbySyncService.broadcastSync();
         }
 
         @JavascriptInterface

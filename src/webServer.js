@@ -316,6 +316,15 @@ class WebServer {
       return;
     }
 
+    // DELETE /api/groups/:id (Delete group and all its data)
+    if (groupDetailMatch && req.method === 'DELETE') {
+      const groupId = groupDetailMatch[1];
+      expenses.deleteGroup(groupId);
+      this.broadcastUpdate('GROUP_DELETED', { groupId });
+      sendJson(200, { success: true });
+      return;
+    }
+
     // POST /api/groups/:id/expenses
     const addExpenseMatch = pathname.match(/^\/api\/groups\/([a-zA-Z0-9_-]+)\/expenses$/);
     if (addExpenseMatch && req.method === 'POST') {
