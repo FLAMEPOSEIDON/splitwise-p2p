@@ -42,10 +42,12 @@ body {
   position: sticky;
   top: 0;
   z-index: 50;
-  background: rgba(11, 17, 32, 0.88);
-  backdrop-filter: blur(12px);
+  background: rgba(11, 17, 32, 0.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--border);
-  padding: 14px 18px;
+  padding: 0 16px;
+  height: 58px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -56,39 +58,78 @@ body {
   align-items: center;
   gap: 10px;
   font-weight: 700;
-  font-size: 1.15rem;
+  font-size: 1.12rem;
   letter-spacing: -0.3px;
+  user-select: none;
 }
 
 .brand-icon {
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   border-radius: 9px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, var(--primary), var(--cyan));
   box-shadow: 0 0 12px var(--primary-glow);
+  flex-shrink: 0;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* 1-Tap QR Scan Button in Header */
+.btn-header-scan {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 20px;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  color: var(--primary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+.btn-header-scan:hover, .btn-header-scan:active {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: var(--primary);
+  transform: translateY(-1px);
+}
+.btn-header-scan svg {
+  flex-shrink: 0;
 }
 
 /* Status Pill */
 .status-pill {
-  display: flex;
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  height: 34px;
+  padding: 0 12px;
   font-size: 0.8rem;
   font-weight: 600;
-  padding: 5px 10px;
   border-radius: 20px;
   background: rgba(51, 65, 85, 0.6);
   border: 1px solid var(--border);
+  color: var(--text);
   cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+.status-pill:hover, .status-pill:active {
+  background: rgba(51, 65, 85, 0.9);
+  border-color: var(--text-muted);
 }
 
 .status-dot {
@@ -967,48 +1008,72 @@ body {
   border-color: var(--primary);
 }
 
-/* User Profile Badge in Header */
-.user-profile-badge {
+/* Profile Hero Card in Network Tab */
+.profile-hero-card {
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.9));
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: var(--radius-md);
+  padding: 16px 18px;
+  margin-bottom: 20px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid var(--border);
-  padding: 4px 10px;
-  border-radius: 20px;
-  cursor: pointer;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--text);
-  transition: all 0.2s ease;
-  user-select: none;
+  gap: 14px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
 }
-.user-profile-badge:hover, .user-profile-badge:active {
-  background: rgba(16, 185, 129, 0.15);
-  border-color: var(--primary);
-  transform: translateY(-1px);
-}
-.user-avatar-circle {
-  width: 22px;
-  height: 22px;
+.profile-avatar-large {
+  width: 48px;
+  height: 48px;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--cyan), var(--primary));
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.72rem;
+  font-size: 1.4rem;
   font-weight: 700;
   color: #fff;
+  flex-shrink: 0;
+  box-shadow: 0 0 14px var(--primary-glow);
 }
-.user-name-text {
-  max-width: 90px;
+.profile-info-col {
+  flex: 1;
+  min-width: 0;
+}
+.profile-name-title {
+  font-size: 1.12rem;
+  font-weight: 700;
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  margin-bottom: 2px;
 }
-.edit-pen {
-  font-size: 0.7rem;
-  opacity: 0.7;
+.profile-meta-sub {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.btn-edit-profile-action {
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+}
+
+/* First-Time Welcome Modal */
+.welcome-card {
+  max-width: 380px;
+  text-align: center;
+  padding: 28px 22px;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  background: linear-gradient(180deg, #1e293b, #0f172a);
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.7), 0 0 30px rgba(16, 185, 129, 0.15);
+}
+.welcome-icon-ring {
+  display: inline-flex;
+  padding: 6px;
+  border-radius: 20px;
+  background: rgba(16, 185, 129, 0.15);
+  box-shadow: 0 0 20px var(--primary-glow);
 }
 
 /* CSV Upload Card */

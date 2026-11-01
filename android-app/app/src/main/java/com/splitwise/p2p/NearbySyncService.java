@@ -311,6 +311,7 @@ public class NearbySyncService {
             if (remoteName != null && !remoteName.trim().isEmpty()) {
                 discoveredEndpoints.put(endpointId, remoteName.trim());
                 connectedEndpoints.put(endpointId, remoteName.trim());
+                db.updateMemberNameForDevice(remoteDeviceId, remoteName.trim());
                 mainHandler.post(() -> listener.onPeerConnected(endpointId, remoteName.trim()));
             }
 
@@ -430,7 +431,7 @@ public class NearbySyncService {
                 JSONArray members = gData.getJSONArray("members");
                 for (int i = 0; i < members.length(); i++) {
                     JSONObject m = members.getJSONObject(i);
-                    db.addMember(gid, m.getString("name"), m.getString("device_id"));
+                    db.upsertMember(m.optString("id", null), gid, m.getString("name"), m.getString("device_id"), m.optString("joined_at", null));
                 }
 
                 JSONArray expenses = gData.getJSONArray("expenses");

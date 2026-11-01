@@ -22,21 +22,21 @@
     </div>
 
     <div class="header-actions">
-      <!-- User Profile Badge -->
-      <div class="user-profile-badge" id="btn-edit-profile" onclick="openModal('modal-profile')" title="Tap to change your display name">
-        <span class="user-avatar-circle" id="header-user-avatar">👤</span>
-        <span class="user-name-text" id="header-user-name">You</span>
-        <span class="edit-pen">✏️</span>
-      </div>
-
       <!-- 1-Tap QR Scanner Button -->
-      <button class="btn-action-pill" id="btn-header-scan-qr" onclick="triggerQrScan()" title="Scan QR Code to Join Group" style="background: rgba(16, 185, 129, 0.15); border-color: var(--primary); color: var(--primary);">
-        <span>📷 Scan QR</span>
+      <button class="btn-header-scan" id="btn-header-scan-qr" onclick="triggerQrScan()" title="Scan QR Code to Join Group">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="7"></rect>
+          <rect x="14" y="3" width="7" height="7"></rect>
+          <rect x="14" y="14" width="7" height="7"></rect>
+          <rect x="3" y="14" width="7" height="7"></rect>
+        </svg>
+        <span>Scan QR</span>
       </button>
 
+      <!-- Mesh / Sync Status Pill -->
       <div class="status-pill" id="status-pill" onclick="switchView('view-network')" title="Click to view network sync status">
-        <div class="status-dot online" id="status-dot"></div>
-        <span id="status-text">Mesh Sync</span>
+        <div class="status-dot" id="status-dot"></div>
+        <span id="status-text">Mesh</span>
       </div>
     </div>
   </header>
@@ -178,7 +178,21 @@
     <!-- VIEW 3: Network & Mesh Sync -->
     <div id="view-network" style="display: none;">
       <div class="section-header">
-        <h2 class="section-title">Network Mesh & Quick Share</h2>
+        <h2 class="section-title">Profile & Network Mesh</h2>
+      </div>
+
+      <!-- User Profile Card -->
+      <div class="profile-hero-card">
+        <div class="profile-avatar-large" id="profile-card-avatar">👤</div>
+        <div class="profile-info-col">
+          <div class="profile-name-title" id="profile-card-name">You</div>
+          <div class="profile-meta-sub">
+            <span id="profile-card-dev-id">Device: ...</span> • <span style="color: var(--primary);">Mesh Active</span>
+          </div>
+        </div>
+        <button class="btn btn-secondary btn-sm btn-edit-profile-action" id="btn-edit-profile-network" onclick="openModal('modal-profile')">
+          ✏️ Edit Name
+        </button>
       </div>
 
       <div class="group-header-card">
@@ -296,6 +310,38 @@
 
         <button type="submit" class="btn btn-primary btn-block">Save Expense</button>
       </form>
+    </div>
+  </div>
+
+  <!-- MODAL: First-Time Registration -->
+  <div class="modal-overlay" id="modal-welcome-register">
+    <div class="modal-content welcome-card">
+      <div class="welcome-header">
+        <div class="welcome-icon-ring">
+          <div class="brand-icon" style="width: 48px; height: 48px; border-radius: 14px; font-size: 1.5rem; margin: 0 auto; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, var(--primary), var(--cyan));">
+            ⚡
+          </div>
+        </div>
+        <h2 style="font-size: 1.4rem; font-weight: 800; margin-top: 14px; margin-bottom: 6px; color: var(--text);">
+          Welcome to Splitwise <span style="color: var(--primary);">P2P</span>
+        </h2>
+        <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; margin: 0 auto;">
+          Enter your name to register on this device. Your name will be used across all your groups, expense splits, and nearby mesh discovery.
+        </p>
+      </div>
+
+      <form id="form-welcome-register" style="margin-top: 20px;">
+        <div class="form-group" style="text-align: left;">
+          <label class="form-label" style="font-weight: 600; font-size: 0.85rem; color: var(--text);">Your Name</label>
+          <input type="text" class="form-input" id="input-welcome-name" placeholder="e.g. Chandan" required autofocus style="font-size: 1.05rem; padding: 12px 14px; border-radius: var(--radius-sm);">
+        </div>
+        <button type="submit" class="btn btn-primary btn-block" style="padding: 12px; font-size: 1rem; font-weight: 700; margin-top: 16px; border-radius: var(--radius-sm);">
+          Continue & Start Splitting 🚀
+        </button>
+      </form>
+      <div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 14px; text-align: center;">
+        🔒 100% Offline & Private • Stored securely on your device
+      </div>
     </div>
   </div>
 

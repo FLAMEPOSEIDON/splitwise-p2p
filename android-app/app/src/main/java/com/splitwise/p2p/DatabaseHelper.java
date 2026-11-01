@@ -107,14 +107,42 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     }
 
     public void addMember(String groupId, String name, String deviceId) {
+        upsertMember(UUID.randomUUID().toString(), groupId, name, deviceId, nowIso());
+    }
+
+    public void upsertMember(String id, String groupId, String name, String deviceId, String joinedAt) {
+        SQLiteDatabase db = getWritableDatabase();
+        String trimmedName = (name != null && !name.trim().isEmpty()) ? name.trim() : "Unknown";
+        String devId = deviceId != null ? deviceId : "dev_" + UUID.randomUUID().toString().substring(0, 8);
+        String jAt = joinedAt != null ? joinedAt : nowIso();
+
+        Cursor c = db.rawQuery("SELECT id FROM members WHERE group_id = ? AND device_id = ?",
+                new String[]{groupId, devId});
+        if (c.moveToFirst()) {
+            String existingId = c.getString(0);
+            c.close();
+            ContentValues cv = new ContentValues();
+            cv.put("name", trimmedName);
+            db.update("members", cv, "id = ?", new String[]{existingId});
+            return;
+        }
+        c.close();
+
+        ContentValues cv = new ContentValues();
+        cv.put("id", id != null ? id : UUID.randomUUID().toString());
+        cv.put("group_id", groupId);
+        cv.put("name", trimmedName);
+        cv.put("device_id", devId);
+        cv.put("joined_at", jAt);
+        db.insertWithOnConflict("members", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    public void updateMemberNameForDevice(String deviceId, String newName) {
+        if (deviceId == null || newName == null || newName.trim().isEmpty()) return;
         SQLiteDatabase db = getWritableDatabase();
         ContentValues cv = new ContentValues();
-        cv.put("id", UUID.randomUUID().toString());
-        cv.put("group_id", groupId);
-        cv.put("name", name.trim());
-        cv.put("device_id", deviceId != null ? deviceId : "dev_" + UUID.randomUUID().toString().substring(0, 8));
-        cv.put("joined_at", nowIso());
-        db.insertWithOnConflict("members", null, cv, SQLiteDatabase.CONFLICT_IGNORE);
+        cv.put("name", newName.trim());
+        db.update("members", cv, "device_id = ?", new String[]{deviceId});
     }
 
     public JSONObject getOrCreateMember(String groupId, String name, String deviceId) {

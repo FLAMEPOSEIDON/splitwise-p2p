@@ -202,6 +202,7 @@ public class P2pSyncService {
 
             String remoteName = msg.optString("deviceName", null);
             if (remoteName != null && !remoteName.trim().isEmpty()) {
+                db.updateMemberNameForDevice(remoteDeviceId, remoteName.trim());
                 for (PeerInfo p : discoveredPeers.values()) {
                     if (p.deviceId != null && p.deviceId.equals(remoteDeviceId)) {
                         p.name = remoteName.trim();
@@ -321,7 +322,7 @@ public class P2pSyncService {
                 JSONArray members = gData.getJSONArray("members");
                 for (int i = 0; i < members.length(); i++) {
                     JSONObject m = members.getJSONObject(i);
-                    db.addMember(gid, m.getString("name"), m.getString("device_id"));
+                    db.upsertMember(m.optString("id", null), gid, m.getString("name"), m.getString("device_id"), m.optString("joined_at", null));
                 }
 
                 JSONArray expenses = gData.getJSONArray("expenses");

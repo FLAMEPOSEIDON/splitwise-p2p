@@ -52,10 +52,16 @@ const el = {
   btnCertHeader: document.getElementById('btn-cert-header'),
   btnHeaderScanQr: document.getElementById('btn-header-scan-qr'),
 
-  // User Profile
-  btnEditProfile: document.getElementById('btn-edit-profile'),
-  headerUserAvatar: document.getElementById('header-user-avatar'),
-  headerUserName: document.getElementById('header-user-name'),
+  // First-Time Registration & Profile
+  modalWelcomeRegister: document.getElementById('modal-welcome-register'),
+  formWelcomeRegister: document.getElementById('form-welcome-register'),
+  inputWelcomeName: document.getElementById('input-welcome-name'),
+
+  profileCardAvatar: document.getElementById('profile-card-avatar'),
+  profileCardName: document.getElementById('profile-card-name'),
+  profileCardDevId: document.getElementById('profile-card-dev-id'),
+  btnEditProfileNetwork: document.getElementById('btn-edit-profile-network'),
+
   modalProfile: document.getElementById('modal-profile'),
   formProfileName: document.getElementById('form-profile-name'),
   inputProfileName: document.getElementById('input-profile-name'),
@@ -334,6 +340,7 @@ async function fetchApi(endpoint, options = {}) {
         return {
           deviceId: info.deviceId,
           deviceName: info.deviceName,
+          nameConfigured: info.nameConfigured === true,
           localIPs: [info.ip || '127.0.0.1'],
           httpsPort: info.port || 47811,
           peers: peers,
@@ -496,15 +503,20 @@ function renderInfo() {
   const dName = state.info.deviceName || 'You';
   const initial = (dName.replace(/^Android User /i, '')[0] || '👤').toUpperCase();
 
-  if (el.headerUserName) el.headerUserName.textContent = dName;
-  if (el.headerUserAvatar) el.headerUserAvatar.textContent = initial;
+  // Profile Card in Network View
+  if (el.profileCardName) el.profileCardName.textContent = dName;
+  if (el.profileCardAvatar) el.profileCardAvatar.textContent = initial;
+  if (el.profileCardDevId) el.profileCardDevId.textContent = 'Device: ' + (state.info.deviceId ? state.info.deviceId.slice(0, 8) : '...');
+
   if (el.profileModalAvatar) el.profileModalAvatar.textContent = initial;
-  if (el.inputProfileName && !el.inputProfileName.value) el.inputProfileName.value = dName;
+  if (el.inputProfileName) el.inputProfileName.value = dName;
 
   if (el.netDeviceId) el.netDeviceId.textContent = state.info.deviceId;
   if (el.netDeviceName) el.netDeviceName.textContent = dName;
-  if (el.createYourName && !el.createYourName.value) el.createYourName.value = dName;
-  if (el.joinYourName && !el.joinYourName.value) el.joinYourName.value = dName;
+
+  // Universal pre-fill of user's name
+  if (el.createYourName) el.createYourName.value = dName;
+  if (el.joinYourName) el.joinYourName.value = dName;
 
   const primaryIp = state.info.localIPs && state.info.localIPs[0] ? state.info.localIPs[0] : window.location.hostname;
   const port = state.info.httpsPort || 47811;
@@ -512,10 +524,13 @@ function renderInfo() {
 
   renderPeers(state.info.peers || []);
 
-  // Automatic onboarding: if user name was never configured, prompt them on first launch!
-  if (state.info.nameConfigured === false && !localStorage.getItem('splitwise_p2p_name_prompted')) {
-    localStorage.setItem('splitwise_p2p_name_prompted', 'true');
-    setTimeout(() => openModal('modal-profile'), 400);
+  // Automatic onboarding: if user name was never configured, prompt them with Welcome Registration!
+  const hasRegistered = localStorage.getItem('splitwise_p2p_registered_name') || (state.info.nameConfigured === true && !dName.startsWith('Android User '));
+  if (!hasRegistered) {
+    if (el.inputWelcomeName && !el.inputWelcomeName.value) {
+      el.inputWelcomeName.value = (!dName.startsWith('Android User ')) ? dName : '';
+    }
+    setTimeout(() => openModal('modal-welcome-register'), 350);
   }
 }
 
@@ -737,7 +752,17 @@ function renderGroupDetail() {
 }
 
 function renderExpensesList(expenses, members) {
-  const memberMap = Object.fromEntries(members.map((m) => [m.id, m.name]));
+  const myDeviceId = state.info && state.info.deviceId;
+  const myDevName = state.info && state.info.deviceName;
+  const memberMap = {};
+  for (const m of members) {
+    let name = m.name;
+    if (myDeviceId && m.device_id === myDeviceId && myDevName) {
+      name = myDevName;
+    }
+    memberMap[m.id] = (myDeviceId && m.device_id === myDeviceId) ? `${name} (You)` : name;
+  }
+
   let activeExpenses = expenses.filter((e) => !e.deleted);
 
   // Category filter
@@ -798,7 +823,16 @@ function renderExpensesList(expenses, members) {
 }
 
 function renderBalancesAndSettlements(balances, settlements, members) {
-  const memberMap = Object.fromEntries(members.map((m) => [m.id, m.name]));
+  const myDeviceId = state.info && state.info.deviceId;
+  const myDevName = state.info && state.info.deviceName;
+  const memberMap = {};
+  for (const m of members) {
+    let name = m.name;
+    if (myDeviceId && m.device_id === myDeviceId && myDevName) {
+      name = myDevName;
+    }
+    memberMap[m.id] = (myDeviceId && m.device_id === myDeviceId) ? `${name} (You)` : name;
+  }
 
   // Settlements
   if (!settlements || settlements.length === 0) {
@@ -855,17 +889,23 @@ function renderBalancesAndSettlements(balances, settlements, members) {
 }
 
 function renderMembersList(members, groupId) {
+  const myDeviceId = state.info && state.info.deviceId;
+  const myDevName = state.info && state.info.deviceName;
   el.membersListContainer.innerHTML = members
     .map(
-      (m) => `
+      (m) => {
+        const isMe = myDeviceId && m.device_id === myDeviceId;
+        const displayName = isMe && myDevName ? myDevName : m.name;
+        return `
     <div class="member-item">
-      <div class="member-avatar">${escapeHtml((m.name || 'M')[0]).toUpperCase()}</div>
+      <div class="member-avatar">${escapeHtml((displayName || 'M')[0]).toUpperCase()}</div>
       <div>
-        <div class="member-name">${escapeHtml(m.name)}</div>
+        <div class="member-name">${escapeHtml(displayName)} ${isMe ? '<span style="font-size:0.75rem; color:var(--primary); font-weight:700;">(You)</span>' : ''}</div>
         <div style="font-size: 0.75rem; color: var(--text-dim); font-family: monospace;">Device: ${m.device_id.slice(0, 8)}</div>
       </div>
     </div>
-  `
+  `;
+      }
     )
     .join('');
 }
@@ -893,6 +933,9 @@ function setupAddExpenseModal() {
   const data = state.currentGroupData;
   if (!data || !data.members) return;
 
+  const myDeviceId = state.info && state.info.deviceId;
+  const myDevName = state.info && state.info.deviceName;
+
   el.expDesc.value = '';
   el.expAmount.value = '';
   el.expDate.value = new Date().toISOString().split('T')[0];
@@ -901,7 +944,11 @@ function setupAddExpenseModal() {
   updateSplitModeUI();
 
   el.expPaidBy.innerHTML = data.members
-    .map((m) => `<option value="${m.id}">${escapeHtml(m.name)}</option>`)
+    .map((m) => {
+      const isMe = myDeviceId && m.device_id === myDeviceId;
+      const displayName = isMe && myDevName ? myDevName : m.name;
+      return `<option value="${m.id}">${escapeHtml(displayName)}${isMe ? ' (You)' : ''}</option>`;
+    })
     .join('');
 
   if (state.info) {
@@ -911,12 +958,16 @@ function setupAddExpenseModal() {
 
   el.expSplitCheckboxes.innerHTML = data.members
     .map(
-      (m) => `
+      (m) => {
+        const isMe = myDeviceId && m.device_id === myDeviceId;
+        const displayName = isMe && myDevName ? myDevName : m.name;
+        return `
     <label class="checkbox-label">
       <input type="checkbox" name="splitMember" value="${m.id}" checked>
-      <span>${escapeHtml(m.name)}</span>
+      <span>${escapeHtml(displayName)}${isMe ? ' (You)' : ''}</span>
     </label>
-  `
+  `;
+      }
     )
     .join('');
 
@@ -1225,6 +1276,28 @@ document.querySelectorAll('.filter-chip').forEach((chip) => {
 // 13. Create & Join Group Forms & Profile
 // -------------------------------------------------------------
 
+// First-Time Registration Handler
+safeOn(el.formWelcomeRegister, 'submit', async (e) => {
+  e.preventDefault();
+  const name = el.inputWelcomeName.value.trim();
+  if (!name) return;
+
+  closeModal('modal-welcome-register');
+  if (isNativeApp && window.AndroidBridge && window.AndroidBridge.setDeviceName) {
+    window.AndroidBridge.setDeviceName(name);
+  }
+  localStorage.setItem('splitwise_p2p_registered_name', name);
+  if (state.info) {
+    state.info.deviceName = name;
+    state.info.nameConfigured = true;
+  }
+  if (el.createYourName) el.createYourName.value = name;
+  if (el.joinYourName) el.joinYourName.value = name;
+  renderInfo();
+  showToast(`Welcome, ${name}! Your profile is ready.`);
+  await refreshData();
+});
+
 safeOn(el.formProfileName, 'submit', async (e) => {
   e.preventDefault();
   const newName = el.inputProfileName.value.trim();
@@ -1234,11 +1307,19 @@ safeOn(el.formProfileName, 'submit', async (e) => {
   if (isNativeApp && window.AndroidBridge && window.AndroidBridge.setDeviceName) {
     window.AndroidBridge.setDeviceName(newName);
   }
-  localStorage.setItem('splitwise_p2p_user_name', newName);
-  if (state.info) state.info.deviceName = newName;
+  localStorage.setItem('splitwise_p2p_registered_name', newName);
+  if (state.info) {
+    state.info.deviceName = newName;
+    state.info.nameConfigured = true;
+  }
+  if (el.createYourName) el.createYourName.value = newName;
+  if (el.joinYourName) el.joinYourName.value = newName;
   renderInfo();
-  showToast(`Profile name set to "${newName}"!`);
-  refreshData();
+  showToast(`Profile name updated to "${newName}"!`);
+  await refreshData();
+  if (state.activeGroupId) {
+    loadGroupDetail(state.activeGroupId, false);
+  }
 });
 
 if (el.csvFileInput) {
@@ -1330,6 +1411,7 @@ document.querySelectorAll('.bottom-nav .nav-item').forEach((item) => {
 });
 
 // Header navigation & Modal Openers (Safe bindings)
+safeOn(el.btnEditProfileNetwork, 'click', () => openModal('modal-profile'));
 safeOn(el.btnEditProfile, 'click', () => openModal('modal-profile'));
 safeOn(el.brandHome, 'click', () => switchView('view-groups'));
 safeOn(el.statusPill, 'click', () => switchView('view-network'));

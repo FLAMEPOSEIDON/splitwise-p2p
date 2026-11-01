@@ -329,8 +329,15 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                     .putBoolean(PREF_NAME_CONFIGURED, true)
                     .apply();
 
-            if (syncService != null) syncService.updateDeviceName(deviceName);
-            if (nearbySyncService != null) nearbySyncService.updateDeviceName(deviceName);
+            dbHelper.updateMemberNameForDevice(deviceId, deviceName);
+            if (syncService != null) {
+                syncService.updateDeviceName(deviceName);
+                syncService.broadcastSync();
+            }
+            if (nearbySyncService != null) {
+                nearbySyncService.updateDeviceName(deviceName);
+                nearbySyncService.broadcastSync();
+            }
         }
 
         @JavascriptInterface
