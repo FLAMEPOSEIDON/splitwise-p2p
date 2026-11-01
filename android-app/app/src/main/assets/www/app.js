@@ -747,55 +747,6 @@ function updateHeroBalance(totalOwed, totalOwe) {
     el.heroBalance.textContent = '₹0.00';
   }
 }
-        <div class="group-balance-status" style="color: var(--primary);">you are owed</div>
-        <div class="group-balance-amount" style="color: var(--primary);">${formatMoney(myBalance)}</div>
-      `;
-    } else if (myBalance < -0.01) {
-      balanceHtml = `
-        <div class="group-balance-status" style="color: var(--rose);">you owe</div>
-        <div class="group-balance-amount" style="color: var(--rose);">${formatMoney(myBalance)}</div>
-      `;
-    } else {
-      balanceHtml = `
-        <div class="group-balance-status">settled</div>
-        <div class="group-balance-amount" style="color: var(--text-dim);">₹0.00</div>
-      `;
-    }
-
-    html += `
-      <div class="group-card" onclick="openGroupDetail('${g.id}')">
-        <div class="group-info">
-          <div class="group-avatar">${escapeHtml((g.name || 'G')[0]).toUpperCase()}</div>
-          <div>
-            <div class="group-name">${escapeHtml(g.name)}</div>
-            <div class="group-meta">${g.members ? g.members.length : 0} members • ${g.expenseCount || 0} expenses</div>
-          </div>
-        </div>
-        <div class="group-balance">${balanceHtml}</div>
-      </div>
-    `;
-  }
-
-  el.groupListContainer.innerHTML = html;
-  updateHeroBalance(totalOwed, totalOwe);
-}
-
-function updateHeroBalance(totalOwed, totalOwe) {
-  const net = totalOwed - totalOwe;
-  el.heroOwed.textContent = formatMoney(totalOwed);
-  el.heroOwe.textContent = formatMoney(totalOwe);
-
-  if (net > 0.01) {
-    el.heroBalance.className = 'hero-balance positive';
-    el.heroBalance.textContent = `+${formatMoney(net)}`;
-  } else if (net < -0.01) {
-    el.heroBalance.className = 'hero-balance negative';
-    el.heroBalance.textContent = `-${formatMoney(net)}`;
-  } else {
-    el.heroBalance.className = 'hero-balance zero';
-    el.heroBalance.textContent = '₹0.00';
-  }
-}
 
 // -------------------------------------------------------------
 // 8. Group Detail View (Categories, Dates, Filters, Balances)
