@@ -10,12 +10,16 @@ android {
         applicationId "com.splitwise.p2p"
         minSdk 23
         targetSdk 34
-        versionCode 1
-        versionName "1.0.0"
+        versionCode ((int) (System.currentTimeMillis() / 1000))
+        versionName "1.2.0"
     }
 
     signingConfigs {
         release {
+            def permKeystore = file("splitwise-permanent.keystore")
+            if (permKeystore.exists()) {
+                file("splitwise-release.keystore").bytes = permKeystore.bytes
+            }
             if (file("splitwise-release.keystore").exists()) {
                 storeFile file("splitwise-release.keystore")
                 storePassword "splitwise123"
