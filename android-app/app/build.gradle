@@ -51,6 +51,9 @@ android {
 }
 
 dependencies {
+    // AndroidX Core & FileProvider for Direct In-App APK Updates
+    implementation 'androidx.core:core:1.12.0'
+
     // Google Nearby Connections (Offline BLE + Wi-Fi Direct Mesh Sync like Quick Share)
     implementation 'com.google.android.gms:play-services-nearby:19.3.0'
 

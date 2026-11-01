@@ -23,6 +23,12 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
+import android.provider.Settings;
+
+import androidx.core.content.FileProvider;
+
+import java.net.HttpURLConnection;
+import java.net.URL;
 
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanner;
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions;
@@ -661,6 +667,31 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
             }
         }
 
+        private InputStream openStreamWithRedirects(String initialUrl) throws Exception {
+            String currentUrl = initialUrl;
+            for (int i = 0; i < 6; i++) {
+                URL u = new URL(currentUrl);
+                HttpURLConnection conn = (HttpURLConnection) u.openConnection();
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(30000);
+                conn.setInstanceFollowRedirects(true);
+                conn.setRequestProperty("User-Agent", "SplitwiseP2P-OTA");
+                int code = conn.getResponseCode();
+                if (code == HttpURLConnection.HTTP_MOVED_PERM || code == HttpURLConnection.HTTP_MOVED_TEMP || code == 307 || code == 308) {
+                    String loc = conn.getHeaderField("Location");
+                    if (loc != null && !loc.isEmpty()) {
+                        currentUrl = loc;
+                        continue;
+                    }
+                }
+                if (code >= 200 && code < 300) {
+                    return conn.getInputStream();
+                }
+                throw new Exception("HTTP " + code + " from " + currentUrl);
+            }
+            throw new Exception("Too many redirects for " + initialUrl);
+        }
+
         @JavascriptInterface
         public void performOtaUpdate(String commitSha) {
             new Thread(() -> {
@@ -676,16 +707,9 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                     if (!tempDir.exists()) tempDir.mkdirs();
 
                     for (String fName : files) {
-                        java.net.URL u = new java.net.URL(baseUrl + fName + "?v=" + System.currentTimeMillis());
-                        java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection();
-                        conn.setConnectTimeout(8000);
-                        conn.setReadTimeout(8000);
-                        conn.setRequestProperty("User-Agent", "SplitwiseP2P-OTA");
-                        if (conn.getResponseCode() != 200) {
-                            throw new Exception("HTTP " + conn.getResponseCode() + " for " + fName);
-                        }
+                        String fileUrl = baseUrl + fName + "?v=" + System.currentTimeMillis();
                         File tmp = new File(tempDir, fName);
-                        try (InputStream in = conn.getInputStream();
+                        try (InputStream in = openStreamWithRedirects(fileUrl);
                              FileOutputStream out = new FileOutputStream(tmp)) {
                             byte[] buffer = new byte[8192];
                             int read;
@@ -711,36 +735,79 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                     }
 
                     runOnUiThread(() -> {
-                        Toast.makeText(MainActivity.this, "🎉 Update applied directly! Running newest version.", Toast.LENGTH_LONG).show();
+                        Toast.makeText(MainActivity.this, "🎉 Update applied directly! App is restarting...", Toast.LENGTH_LONG).show();
                         webView.clearCache(true);
                         webView.reload();
                     });
                 } catch (Exception e) {
                     Log.e(TAG, "OTA update error: " + e.getMessage(), e);
                     runOnUiThread(() -> {
-                        Toast.makeText(MainActivity.this, "Direct update failed: " + e.getMessage() + ". Opening APK download...", Toast.LENGTH_LONG).show();
-                        installApkUpdate("https://github.com/FLAMEPOSEIDON/splitwise-p2p/releases/latest/download/SplitwiseP2P.apk");
+                        Toast.makeText(MainActivity.this, "Direct update failed: " + e.getMessage() + ". Downloading APK...", Toast.LENGTH_SHORT).show();
                     });
+                    installApkUpdate("https://github.com/FLAMEPOSEIDON/splitwise-p2p/releases/latest/download/SplitwiseP2P.apk");
                 }
             }).start();
         }
 
         @JavascriptInterface
         public void installApkUpdate(String downloadUrl) {
-            runOnUiThread(() -> {
+            new Thread(() -> {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "⬇️ Downloading APK update directly inside app...", Toast.LENGTH_SHORT).show());
                 try {
                     String url = (downloadUrl != null && !downloadUrl.trim().isEmpty())
                             ? downloadUrl.trim()
                             : "https://github.com/FLAMEPOSEIDON/splitwise-p2p/releases/latest/download/SplitwiseP2P.apk";
-                    Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-                    browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    startActivity(browserIntent);
-                    Toast.makeText(MainActivity.this, "Downloading latest APK update...", Toast.LENGTH_LONG).show();
+
+                    File cacheDir = getExternalCacheDir() != null ? getExternalCacheDir() : getCacheDir();
+                    File apkFile = new File(cacheDir, "SplitwiseP2P-update.apk");
+                    if (apkFile.exists()) apkFile.delete();
+
+                    try (InputStream in = openStreamWithRedirects(url);
+                         FileOutputStream out = new FileOutputStream(apkFile)) {
+                        byte[] buffer = new byte[16384];
+                        int read;
+                        while ((read = in.read(buffer)) != -1) {
+                            out.write(buffer, 0, read);
+                        }
+                    }
+
+                    if (!apkFile.exists() || apkFile.length() < 100000) {
+                        throw new Exception("Downloaded APK is too small or incomplete");
+                    }
+
+                    runOnUiThread(() -> {
+                        try {
+                            Toast.makeText(MainActivity.this, "📦 Download complete! Launching installer...", Toast.LENGTH_SHORT).show();
+
+                            // Android 8+ Check unknown sources permission
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                if (!getPackageManager().canRequestPackageInstalls()) {
+                                    Toast.makeText(MainActivity.this, "Please allow Splitwise P2P to install updates, then tap install", Toast.LENGTH_LONG).show();
+                                    Intent manageIntent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
+                                    manageIntent.setData(Uri.parse("package:" + getPackageName()));
+                                    manageIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                    startActivity(manageIntent);
+                                }
+                            }
+
+                            Uri apkUri = FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".fileprovider", apkFile);
+                            Intent intent = new Intent(Intent.ACTION_VIEW);
+                            intent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+                            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                            startActivity(intent);
+                        } catch (Exception ex) {
+                            Log.e(TAG, "Failed to launch package installer", ex);
+                            Toast.makeText(MainActivity.this, "Installer error: " + ex.getMessage(), Toast.LENGTH_LONG).show();
+                        }
+                    });
                 } catch (Exception e) {
-                    Log.e(TAG, "Failed to launch update intent", e);
-                    Toast.makeText(MainActivity.this, "Error starting download: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                    Log.e(TAG, "Direct APK download failed: " + e.getMessage(), e);
+                    runOnUiThread(() -> {
+                        Toast.makeText(MainActivity.this, "In-app download error: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    });
                 }
-            });
+            }).start();
         }
     }
 }

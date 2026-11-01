@@ -108,8 +108,8 @@ class MongoSyncManager {
         }
 
         this.client = new MongoClient(this.config.uri, {
-          serverSelectionTimeoutMS: 8000,
-          connectTimeoutMS: 8000,
+          serverSelectionTimeoutMS: 5000,
+          connectTimeoutMS: 5000,
         });
 
         await this.client.connect();
@@ -162,54 +162,74 @@ class MongoSyncManager {
 
     try {
       if (this.mongoDb) {
-        // --- 1. Push Local -> MongoDB ---
+        // --- 1. Push Local -> MongoDB using fast parallel bulkWrite ---
         const localGroups = expenses.listGroups();
         const groupsCol = this.mongoDb.collection('groups');
         const membersCol = this.mongoDb.collection('members');
         const expensesCol = this.mongoDb.collection('expenses');
 
+        const groupOps = [];
+        const memberOps = [];
+        const expOps = [];
+
         for (const g of localGroups) {
-          await groupsCol.updateOne(
-            { _id: g.id },
-            { $set: { _id: g.id, id: g.id, name: g.name, created_by: g.created_by, created_at: g.created_at } },
-            { upsert: true }
-          );
+          groupOps.push({
+            updateOne: {
+              filter: { _id: g.id },
+              update: { $set: { _id: g.id, id: g.id, name: g.name, created_by: g.created_by, created_at: g.created_at } },
+              upsert: true,
+            },
+          });
 
           const members = expenses.listMembers(g.id);
           for (const m of members) {
-            await membersCol.updateOne(
-              { _id: m.id },
-              { $set: { _id: m.id, id: m.id, group_id: m.group_id, name: m.name, device_id: m.device_id, joined_at: m.joined_at } },
-              { upsert: true }
-            );
+            memberOps.push({
+              updateOne: {
+                filter: { _id: m.id },
+                update: { $set: { _id: m.id, id: m.id, group_id: m.group_id, name: m.name, device_id: m.device_id, joined_at: m.joined_at } },
+                upsert: true,
+              },
+            });
           }
 
           const localExps = expenses.listExpenses(g.id, { includeDeleted: true });
           for (const exp of localExps) {
-            await expensesCol.updateOne(
-              { _id: exp.id },
-              {
-                $set: {
-                  _id: exp.id,
-                  id: exp.id,
-                  group_id: exp.group_id,
-                  description: exp.description,
-                  amount: exp.amount,
-                  paid_by: exp.paid_by,
-                  split_between: exp.split_between,
-                  created_by_device: exp.created_by_device,
-                  hlc: exp.hlc,
-                  deleted: exp.deleted ? 1 : 0,
-                  updated_hlc: exp.updated_hlc,
+            expOps.push({
+              updateOne: {
+                filter: { _id: exp.id },
+                update: {
+                  $set: {
+                    _id: exp.id,
+                    id: exp.id,
+                    group_id: exp.group_id,
+                    description: exp.description,
+                    amount: exp.amount,
+                    paid_by: exp.paid_by,
+                    split_between: exp.split_between,
+                    created_by_device: exp.created_by_device,
+                    hlc: exp.hlc,
+                    deleted: exp.deleted ? 1 : 0,
+                    updated_hlc: exp.updated_hlc,
+                  },
                 },
+                upsert: true,
               },
-              { upsert: true }
-            );
+            });
           }
         }
 
+        // Execute all writes in single batch round-trips
+        if (groupOps.length > 0) await groupsCol.bulkWrite(groupOps, { ordered: false });
+        if (memberOps.length > 0) await membersCol.bulkWrite(memberOps, { ordered: false });
+        if (expOps.length > 0) await expensesCol.bulkWrite(expOps, { ordered: false });
+
         // --- 2. Pull MongoDB -> Local ---
-        const remoteGroups = await groupsCol.find({}).toArray();
+        const [remoteGroups, remoteMembers, remoteExpenses] = await Promise.all([
+          groupsCol.find({}).toArray(),
+          membersCol.find({}).toArray(),
+          expensesCol.find({}).toArray(),
+        ]);
+
         for (const rg of remoteGroups) {
           const localG = expenses.getGroup(rg.id || rg._id);
           if (!localG) {
@@ -219,12 +239,10 @@ class MongoSyncManager {
           }
         }
 
-        const remoteMembers = await membersCol.find({}).toArray();
         for (const rm of remoteMembers) {
           expenses.addMember(rm.group_id, rm.name, rm.device_id);
         }
 
-        const remoteExpenses = await expensesCol.find({}).toArray();
         for (const re of remoteExpenses) {
           const expId = re.id || re._id;
           const existing = db.prepare('SELECT * FROM expenses WHERE id = ?').get(expId);
