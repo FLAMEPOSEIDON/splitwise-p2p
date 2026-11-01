@@ -168,7 +168,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                 res.put("expenses", dbHelper.listExpenses(groupId, false));
 
                 JSONObject bObj = new JSONObject();
-                for (var entry : dbHelper.computeBalances(groupId).entrySet()) {
+                for (java.util.Map.Entry<String, Double> entry : dbHelper.computeBalances(groupId).entrySet()) {
                     bObj.put(entry.getKey(), entry.getValue());
                 }
                 res.put("balances", bObj);
