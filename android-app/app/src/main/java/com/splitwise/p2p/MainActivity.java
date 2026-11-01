@@ -2,9 +2,12 @@ package com.splitwise.p2p;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ClipData;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -12,6 +15,7 @@ import android.os.Environment;
 import android.util.Log;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -42,7 +46,9 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
     private static final String PREFS_NAME = "SplitwiseP2P_Prefs";
     private static final String PREF_DEVICE_ID = "deviceId";
     private static final String PREF_DEVICE_NAME = "deviceName";
+    private static final String PREF_NAME_CONFIGURED = "nameConfigured";
     private static final int PERMISSION_REQ_CODE = 1001;
+    private static final int FILECHOOSER_RESULTCODE = 2001;
 
     private String deviceId;
     private String deviceName;
@@ -55,6 +61,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
     private WifiManager.MulticastLock multicastLock;
     private WebView webView;
     private GmsBarcodeScanner barcodeScanner;
+    private ValueCallback<Uri[]> uploadMessage;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -122,6 +129,29 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                     } catch (Exception ignored) {}
                 });
             }
+
+            @Override
+            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
+                if (uploadMessage != null) {
+                    uploadMessage.onReceiveValue(null);
+                    uploadMessage = null;
+                }
+                uploadMessage = filePathCallback;
+
+                Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType("*/*");
+                String[] mimeTypes = {"text/csv", "text/comma-separated-values", "application/csv", "text/plain", "*/*"};
+                intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
+
+                try {
+                    startActivityForResult(Intent.createChooser(intent, "Select Splitwise CSV File"), FILECHOOSER_RESULTCODE);
+                } catch (Exception e) {
+                    uploadMessage = null;
+                    return false;
+                }
+                return true;
+            }
         });
         webView.setWebViewClient(new WebViewClient());
 
@@ -176,6 +206,31 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
             if (nearbySyncService != null) {
                 nearbySyncService.start();
             }
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == FILECHOOSER_RESULTCODE) {
+            if (uploadMessage == null) return;
+            Uri[] results = null;
+            if (resultCode == Activity.RESULT_OK && data != null) {
+                String dataString = data.getDataString();
+                ClipData clipData = data.getClipData();
+                if (clipData != null) {
+                    results = new Uri[clipData.getItemCount()];
+                    for (int i = 0; i < clipData.getItemCount(); i++) {
+                        results[i] = clipData.getItemAt(i).getUri();
+                    }
+                } else if (dataString != null) {
+                    results = new Uri[]{Uri.parse(dataString)};
+                } else if (data.getData() != null) {
+                    results = new Uri[]{data.getData()};
+                }
+            }
+            uploadMessage.onReceiveValue(results);
+            uploadMessage = null;
         }
     }
 
@@ -254,6 +309,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                 JSONObject obj = new JSONObject();
                 obj.put("deviceId", deviceId);
                 obj.put("deviceName", deviceName);
+                obj.put("nameConfigured", getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(PREF_NAME_CONFIGURED, false));
                 obj.put("ip", getLocalIpAddress());
                 obj.put("port", P2pSyncService.SYNC_PORT);
                 obj.put("isNativeApp", true);
@@ -265,11 +321,16 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
 
         @JavascriptInterface
         public void setDeviceName(String newName) {
-            deviceName = newName;
+            if (newName == null || newName.trim().isEmpty()) return;
+            deviceName = newName.trim();
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                     .edit()
-                    .putString(PREF_DEVICE_NAME, newName)
+                    .putString(PREF_DEVICE_NAME, deviceName)
+                    .putBoolean(PREF_NAME_CONFIGURED, true)
                     .apply();
+
+            if (syncService != null) syncService.updateDeviceName(deviceName);
+            if (nearbySyncService != null) nearbySyncService.updateDeviceName(deviceName);
         }
 
         @JavascriptInterface
@@ -280,6 +341,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         @JavascriptInterface
         public String createGroup(String name, String userName) {
             JSONObject g = dbHelper.createGroup(name, deviceId, userName);
+            if (syncService != null) syncService.broadcastSync();
             if (nearbySyncService != null) nearbySyncService.broadcastSync();
             return g.toString();
         }
@@ -287,6 +349,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         @JavascriptInterface
         public String joinGroup(String groupId, String userName) {
             dbHelper.joinGroupStub(groupId, deviceId, userName);
+            if (syncService != null) syncService.broadcastSync();
             if (nearbySyncService != null) nearbySyncService.broadcastSync();
             return "{\"success\": true}";
         }
@@ -317,6 +380,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
             try {
                 JSONArray split = new JSONArray(splitBetweenJson);
                 JSONObject exp = dbHelper.addExpense(hlcClock, groupId, desc, amount, paidBy, split, category, date, deviceId);
+                if (syncService != null) syncService.broadcastSync();
                 if (nearbySyncService != null) nearbySyncService.broadcastSync();
                 return exp.toString();
             } catch (Exception e) {
@@ -327,12 +391,14 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         @JavascriptInterface
         public void deleteExpense(String groupId, String expenseId) {
             dbHelper.deleteExpense(hlcClock, expenseId);
+            if (syncService != null) syncService.broadcastSync();
             if (nearbySyncService != null) nearbySyncService.broadcastSync();
         }
 
         @JavascriptInterface
         public String settleDebt(String groupId, String payerId, String receiverId, double amount) {
             JSONObject s = dbHelper.settleDebt(hlcClock, groupId, payerId, receiverId, amount, deviceId);
+            if (syncService != null) syncService.broadcastSync();
             if (nearbySyncService != null) nearbySyncService.broadcastSync();
             return s.toString();
         }
@@ -415,6 +481,9 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                         if (ip != null && !ip.isEmpty()) {
                             syncService.connectToPeer(ip, port);
                         }
+                        if (syncService != null) {
+                            syncService.broadcastSync();
+                        }
                         if (nearbySyncService != null) {
                             nearbySyncService.broadcastSync();
                         }
@@ -431,6 +500,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         @JavascriptInterface
         public String importCsv(String csvContent, String groupId, String groupName) {
             JSONObject res = dbHelper.importSplitwiseCsv(hlcClock, csvContent, groupId, groupName, deviceId);
+            if (syncService != null) syncService.broadcastSync();
             if (nearbySyncService != null) nearbySyncService.broadcastSync();
             return res.toString();
         }
@@ -465,6 +535,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                 }
 
                 JSONObject res = dbHelper.importSplitwiseCsv(hlcClock, sb.toString(), null, "Flat Expenses", deviceId);
+                if (syncService != null) syncService.broadcastSync();
                 if (nearbySyncService != null) nearbySyncService.broadcastSync();
                 return res.toString();
             } catch (Exception e) {

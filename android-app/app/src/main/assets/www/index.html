@@ -22,14 +22,21 @@
     </div>
 
     <div class="header-actions">
+      <!-- User Profile Badge -->
+      <div class="user-profile-badge" id="btn-edit-profile" onclick="openModal('modal-profile')" title="Tap to change your display name">
+        <span class="user-avatar-circle" id="header-user-avatar">👤</span>
+        <span class="user-name-text" id="header-user-name">You</span>
+        <span class="edit-pen">✏️</span>
+      </div>
+
       <!-- 1-Tap QR Scanner Button -->
-      <button class="btn-action-pill" id="btn-header-scan-qr" title="Scan QR Code to Join Group" style="background: rgba(16, 185, 129, 0.15); border-color: var(--primary); color: var(--primary);">
+      <button class="btn-action-pill" id="btn-header-scan-qr" onclick="triggerQrScan()" title="Scan QR Code to Join Group" style="background: rgba(16, 185, 129, 0.15); border-color: var(--primary); color: var(--primary);">
         <span>📷 Scan QR</span>
       </button>
 
-      <div class="status-pill" id="status-pill" title="Click to view network sync status">
+      <div class="status-pill" id="status-pill" onclick="switchView('view-network')" title="Click to view network sync status">
         <div class="status-dot online" id="status-dot"></div>
-        <span id="status-text">Native Mesh</span>
+        <span id="status-text">Mesh Sync</span>
       </div>
     </div>
   </header>
@@ -58,10 +65,10 @@
       <!-- Section Actions -->
       <div class="section-header">
         <h2 class="section-title">Your Groups</h2>
-        <div class="section-actions" style="display: flex; gap: 6px;">
-          <button class="btn btn-secondary btn-sm" id="btn-import-csv-home" title="Import Splitwise CSV">📥 Import CSV</button>
-          <button class="btn btn-secondary btn-sm" id="btn-join-group-modal">+ Join</button>
-          <button class="btn btn-primary btn-sm" id="btn-create-group-modal">+ New Group</button>
+        <div class="section-actions" style="display: flex; gap: 8px;">
+          <button class="btn btn-secondary btn-sm" id="btn-import-csv-home" onclick="openModal('modal-import-csv')" title="Import Splitwise CSV">📥 Import CSV</button>
+          <button class="btn btn-secondary btn-sm" id="btn-join-group-modal" onclick="openModal('modal-join-group')">+ Join</button>
+          <button class="btn btn-primary btn-sm" id="btn-create-group-modal" onclick="openModal('modal-create-group')">+ New Group</button>
         </div>
       </div>
 
@@ -71,8 +78,9 @@
           <div class="empty-state-icon">👥</div>
           <h3>No groups yet</h3>
           <p>Create a group with your friends, join one, or import an existing Splitwise CSV export.</p>
-          <div style="display: flex; gap: 10px; justify-content: center; margin-top: 10px;">
-            <button class="btn btn-primary" id="btn-create-first-group">Create a Group</button>
+          <div style="display: flex; gap: 10px; justify-content: center; margin-top: 10px; flex-wrap: wrap;">
+            <button class="btn btn-primary" id="btn-create-first-group" onclick="openModal('modal-create-group')">+ Create a Group</button>
+            <button class="btn btn-secondary" onclick="openModal('modal-join-group')">🔗 Join by ID</button>
             <button class="btn btn-secondary" onclick="openModal('modal-import-csv')">📥 Import export.csv</button>
           </div>
         </div>
@@ -81,7 +89,7 @@
 
     <!-- VIEW 2: Group Detail -->
     <div id="view-group-detail" style="display: none;">
-      <div class="back-bar" id="btn-back-to-groups">
+      <div class="back-bar" id="btn-back-to-groups" onclick="switchView('view-groups')">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
           <polyline points="15 18 9 12 15 6" />
         </svg>
@@ -98,10 +106,10 @@
 
         <!-- Group Quick Actions: QR, Import, Export -->
         <div class="group-action-row">
-          <button class="btn-action-pill" id="btn-show-group-qr" style="color: var(--cyan); border-color: var(--cyan);">
+          <button class="btn-action-pill" id="btn-show-group-qr" onclick="openModal('modal-group-qr')" style="color: var(--cyan); border-color: var(--cyan);">
             <span>📱 Show QR Code</span>
           </button>
-          <button class="btn-action-pill" id="btn-import-csv-detail">
+          <button class="btn-action-pill" id="btn-import-csv-detail" onclick="openModal('modal-import-csv')">
             <span>📥 Import CSV</span>
           </button>
           <button class="btn-action-pill" id="btn-export-csv">
@@ -339,6 +347,29 @@
     </div>
   </div>
 
+  <!-- MODAL: Set / Edit Profile Name -->
+  <div class="modal-overlay" id="modal-profile">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">Your Profile Name</h3>
+        <button class="btn-close" data-close="modal-profile">&times;</button>
+      </div>
+      <div style="text-align: center; margin-bottom: 16px;">
+        <div style="width: 60px; height: 60px; border-radius: 50%; background: linear-gradient(135deg, var(--cyan), var(--primary)); display: flex; align-items: center; justify-content: center; font-size: 1.8rem; margin: 0 auto 10px; color: #fff; font-weight: bold;" id="profile-modal-avatar">👤</div>
+        <p style="font-size: 0.85rem; color: var(--text-muted);">
+          This name will be visible to nearby friends when discovering your device over Quick Share & Wi-Fi mesh!
+        </p>
+      </div>
+      <form id="form-profile-name">
+        <div class="form-group">
+          <label class="form-label">Your Name</label>
+          <input type="text" class="form-input" id="input-profile-name" placeholder="e.g. Chandan Maharana" required>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Save Name</button>
+      </form>
+    </div>
+  </div>
+
   <!-- MODAL: Import Splitwise CSV -->
   <div class="modal-overlay" id="modal-import-csv">
     <div class="modal-content">
@@ -360,9 +391,12 @@
 
       <div style="text-align: center; font-size: 0.8rem; color: var(--text-dim); margin-bottom: 12px;">— OR CHOOSE CSV FILE —</div>
 
-      <div class="form-group">
-        <label class="form-label">Select Splitwise .csv file</label>
-        <input type="file" id="csv-file-input" accept=".csv" class="form-input">
+      <!-- Styled CSV File Upload Card -->
+      <div class="csv-upload-card" id="csv-upload-trigger" onclick="document.getElementById('csv-file-input').click()">
+        <div style="font-size: 2.2rem; margin-bottom: 6px;">📂</div>
+        <div style="font-weight: 600; font-size: 0.95rem; margin-bottom: 4px;" id="csv-file-status">Tap here to choose .csv file</div>
+        <div style="font-size: 0.78rem; color: var(--text-dim);">Splitwise export CSV files (*.csv)</div>
+        <input type="file" id="csv-file-input" accept=".csv,text/csv,text/plain" style="display: none;">
       </div>
 
       <div class="form-group">

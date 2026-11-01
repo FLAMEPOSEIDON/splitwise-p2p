@@ -52,6 +52,19 @@ const el = {
   btnCertHeader: document.getElementById('btn-cert-header'),
   btnHeaderScanQr: document.getElementById('btn-header-scan-qr'),
 
+  // User Profile
+  btnEditProfile: document.getElementById('btn-edit-profile'),
+  headerUserAvatar: document.getElementById('header-user-avatar'),
+  headerUserName: document.getElementById('header-user-name'),
+  modalProfile: document.getElementById('modal-profile'),
+  formProfileName: document.getElementById('form-profile-name'),
+  inputProfileName: document.getElementById('input-profile-name'),
+  profileModalAvatar: document.getElementById('profile-modal-avatar'),
+
+  // CSV
+  csvUploadTrigger: document.getElementById('csv-upload-trigger'),
+  csvFileStatus: document.getElementById('csv-file-status'),
+
   // Views
   viewGroups: document.getElementById('view-groups'),
   viewGroupDetail: document.getElementById('view-group-detail'),
@@ -238,6 +251,12 @@ async function idbGet(storeName, key) {
 // 3. Modals & View Switching
 // -------------------------------------------------------------
 
+function safeOn(element, event, handler) {
+  if (element) {
+    element.addEventListener(event, handler);
+  }
+}
+
 function openModal(modalId) {
   const m = document.getElementById(modalId);
   if (m) m.classList.add('open');
@@ -247,6 +266,10 @@ function closeModal(modalId) {
   const m = document.getElementById(modalId);
   if (m) m.classList.remove('open');
 }
+
+window.openModal = openModal;
+window.closeModal = closeModal;
+window.switchView = switchView;
 
 document.querySelectorAll('.btn-close').forEach((btn) => {
   btn.addEventListener('click', () => {
@@ -470,48 +493,66 @@ async function loadInfo() {
 
 function renderInfo() {
   if (!state.info) return;
+  const dName = state.info.deviceName || 'You';
+  const initial = (dName.replace(/^Android User /i, '')[0] || '👤').toUpperCase();
+
+  if (el.headerUserName) el.headerUserName.textContent = dName;
+  if (el.headerUserAvatar) el.headerUserAvatar.textContent = initial;
+  if (el.profileModalAvatar) el.profileModalAvatar.textContent = initial;
+  if (el.inputProfileName && !el.inputProfileName.value) el.inputProfileName.value = dName;
+
   if (el.netDeviceId) el.netDeviceId.textContent = state.info.deviceId;
-  if (el.netDeviceName) el.netDeviceName.textContent = state.info.deviceName;
-  if (el.createYourName) el.createYourName.value = state.info.deviceName;
-  if (el.joinYourName) el.joinYourName.value = state.info.deviceName;
+  if (el.netDeviceName) el.netDeviceName.textContent = dName;
+  if (el.createYourName && !el.createYourName.value) el.createYourName.value = dName;
+  if (el.joinYourName && !el.joinYourName.value) el.joinYourName.value = dName;
 
   const primaryIp = state.info.localIPs && state.info.localIPs[0] ? state.info.localIPs[0] : window.location.hostname;
   const port = state.info.httpsPort || 47811;
   if (el.netLocalIp) el.netLocalIp.textContent = `${primaryIp}:${port}`;
 
   renderPeers(state.info.peers || []);
+
+  // Automatic onboarding: if user name was never configured, prompt them on first launch!
+  if (state.info.nameConfigured === false && !localStorage.getItem('splitwise_p2p_name_prompted')) {
+    localStorage.setItem('splitwise_p2p_name_prompted', 'true');
+    setTimeout(() => openModal('modal-profile'), 400);
+  }
 }
 
 function renderPeers(peers) {
   if (!el.peersListContainer) return;
-  if (peers.length === 0) {
+  if (!peers || peers.length === 0) {
     el.peersListContainer.innerHTML = `
-      <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 16px; text-align: center; color: var(--text-muted); font-size: 0.85rem;">
-        Scanning for nearby devices via Quick Share & Wi-Fi...<br>
-        Make sure the other phone has Splitwise P2P open!
+      <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 22px 16px; text-align: center; color: var(--text-muted); font-size: 0.88rem;">
+        <div style="font-size: 2rem; margin-bottom: 8px;">📡</div>
+        <div style="font-weight: 700; color: var(--text); margin-bottom: 4px;">Scanning for Nearby Friends...</div>
+        <div>Keep Splitwise P2P open on both phones.<br>They will appear here automatically with their custom name!</div>
       </div>
     `;
     return;
   }
 
   el.peersListContainer.innerHTML = peers
-    .map(
-      (p) => `
-    <div class="group-card" style="cursor: default;">
-      <div class="group-info">
-        <div class="group-avatar" style="background: linear-gradient(135deg, var(--cyan), var(--primary));">📱</div>
+    .map((p) => {
+      const displayName = p.name || 'Nearby Peer';
+      const initial = (displayName.replace(/^Android User /i, '')[0] || '📱').toUpperCase();
+      const isConnected = p.connected !== false;
+      return `
+    <div class="group-card" style="cursor: default; display: flex; align-items: center; justify-content: space-between; padding: 14px 16px;">
+      <div class="group-info" style="display: flex; align-items: center; gap: 12px;">
+        <div class="group-avatar" style="background: linear-gradient(135deg, var(--cyan), var(--primary)); width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; font-weight: bold; color: #fff;">${escapeHtml(initial)}</div>
         <div>
-          <div class="group-name">${escapeHtml(p.name)}</div>
-          <div class="group-meta">${escapeHtml(p.type || 'P2P Mesh')} • ${p.host ? p.host + ':' + p.port : 'Nearby'}</div>
+          <div class="group-name" style="font-size: 1rem; font-weight: 700;">${escapeHtml(displayName)}</div>
+          <div class="group-meta" style="font-size: 0.78rem; color: var(--text-muted);">${escapeHtml(p.type || 'Quick Share Mesh')} ${p.host ? '• ' + p.host : ''}</div>
         </div>
       </div>
-      <div class="status-pill">
-        <div class="status-dot online"></div>
-        <span>${p.connected !== false ? 'Connected' : 'Nearby'}</span>
+      <div class="status-pill" style="border-color: ${isConnected ? 'var(--primary)' : 'var(--cyan)'}; background: ${isConnected ? 'rgba(16, 185, 129, 0.15)' : 'rgba(6, 182, 212, 0.15)'};">
+        <div class="status-dot ${isConnected ? 'online' : 'syncing'}"></div>
+        <span style="font-size: 0.78rem; font-weight: 600; color: ${isConnected ? 'var(--primary)' : 'var(--cyan)'};">${isConnected ? 'Connected' : 'Discovered'}</span>
       </div>
     </div>
-  `
-    )
+  `;
+    })
     .join('');
 }
 
@@ -911,23 +952,23 @@ function updateSplitModeUI() {
   }
 }
 
-el.btnSplitEqual.addEventListener('click', () => {
+safeOn(el.btnSplitEqual, 'click', () => {
   state.splitMode = 'EQUAL';
   updateSplitModeUI();
 });
 
-el.btnSplitCustom.addEventListener('click', () => {
+safeOn(el.btnSplitCustom, 'click', () => {
   state.splitMode = 'CUSTOM';
   updateSplitModeUI();
 });
 
-el.expAmount.addEventListener('input', () => {
+safeOn(el.expAmount, 'input', () => {
   if (state.splitMode === 'CUSTOM') updateSplitModeUI();
 });
 
-el.fabAddExpense.addEventListener('click', setupAddExpenseModal);
+safeOn(el.fabAddExpense, 'click', setupAddExpenseModal);
 
-el.formAddExpense.addEventListener('submit', async (e) => {
+safeOn(el.formAddExpense, 'submit', async (e) => {
   e.preventDefault();
   const description = el.expDesc.value.trim();
   const amount = parseFloat(el.expAmount.value);
@@ -979,7 +1020,7 @@ function promptSettleUp(payerId, receiverId, amount, payerName, receiverName) {
   openModal('modal-settle-up');
 }
 
-el.btnConfirmSettle.addEventListener('click', async () => {
+safeOn(el.btnConfirmSettle, 'click', async () => {
   if (!state.pendingSettlement) return;
   const { payerId, receiverId, amount } = state.pendingSettlement;
   closeModal('modal-settle-up');
@@ -1016,8 +1057,8 @@ async function deleteExpense(expenseId) {
 // 10. Splitwise CSV Import & Export
 // -------------------------------------------------------------
 
-el.btnImportCsvHome.addEventListener('click', () => openModal('modal-import-csv'));
-el.btnImportCsvDetail.addEventListener('click', () => {
+safeOn(el.btnImportCsvHome, 'click', () => openModal('modal-import-csv'));
+safeOn(el.btnImportCsvDetail, 'click', () => {
   if (state.currentGroupData && state.currentGroupData.group) {
     el.csvGroupName.value = state.currentGroupData.group.name;
   }
@@ -1025,7 +1066,7 @@ el.btnImportCsvDetail.addEventListener('click', () => {
 });
 
 // 1-Tap Quick Import from downloads/export.csv
-el.btnQuickImportDownloads.addEventListener('click', async () => {
+safeOn(el.btnQuickImportDownloads, 'click', async () => {
   closeModal('modal-import-csv');
   showToast('Importing export.csv...');
 
@@ -1048,7 +1089,7 @@ el.btnQuickImportDownloads.addEventListener('click', async () => {
 });
 
 // Manual File Picker Import
-el.btnRunCsvImport.addEventListener('click', async () => {
+safeOn(el.btnRunCsvImport, 'click', async () => {
   const file = el.csvFileInput.files[0];
   if (!file) {
     alert('Please select a .csv file to import.');
@@ -1082,7 +1123,7 @@ el.btnRunCsvImport.addEventListener('click', async () => {
 });
 
 // Export CSV
-el.btnExportCsv.addEventListener('click', async () => {
+safeOn(el.btnExportCsv, 'click', async () => {
   if (!state.activeGroupId) return;
   showToast('Generating Splitwise CSV...');
 
@@ -1127,27 +1168,29 @@ function triggerQrScan() {
   }
 }
 
-el.btnHeaderScanQr.addEventListener('click', triggerQrScan);
-el.btnScanQrJoin.addEventListener('click', () => {
+window.triggerQrScan = triggerQrScan;
+
+safeOn(el.btnHeaderScanQr, 'click', triggerQrScan);
+safeOn(el.btnScanQrJoin, 'click', () => {
   closeModal('modal-join-group');
   triggerQrScan();
 });
 
-el.btnShowGroupQr.addEventListener('click', () => {
+safeOn(el.btnShowGroupQr, 'click', () => {
   if (state.currentGroupData && state.currentGroupData.group) {
     renderGroupQrCode(state.currentGroupData.group);
     openModal('modal-group-qr');
   }
 });
 
-el.btnModalCopyGid.addEventListener('click', () => {
+safeOn(el.btnModalCopyGid, 'click', () => {
   if (state.activeGroupId) {
     navigator.clipboard.writeText(state.activeGroupId);
     showToast('Group ID copied');
   }
 });
 
-el.btnCopyGroupId.addEventListener('click', () => {
+safeOn(el.btnCopyGroupId, 'click', () => {
   if (state.activeGroupId) {
     navigator.clipboard.writeText(state.activeGroupId);
     showToast('Group ID copied');
@@ -1179,10 +1222,40 @@ document.querySelectorAll('.filter-chip').forEach((chip) => {
 });
 
 // -------------------------------------------------------------
-// 13. Create & Join Group Forms
+// 13. Create & Join Group Forms & Profile
 // -------------------------------------------------------------
 
-el.formCreateGroup.addEventListener('submit', async (e) => {
+safeOn(el.formProfileName, 'submit', async (e) => {
+  e.preventDefault();
+  const newName = el.inputProfileName.value.trim();
+  if (!newName) return;
+
+  closeModal('modal-profile');
+  if (isNativeApp && window.AndroidBridge && window.AndroidBridge.setDeviceName) {
+    window.AndroidBridge.setDeviceName(newName);
+  }
+  localStorage.setItem('splitwise_p2p_user_name', newName);
+  if (state.info) state.info.deviceName = newName;
+  renderInfo();
+  showToast(`Profile name set to "${newName}"!`);
+  refreshData();
+});
+
+if (el.csvFileInput) {
+  el.csvFileInput.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (file) {
+      if (el.csvFileStatus) {
+        el.csvFileStatus.textContent = `✅ ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+      }
+      if (el.csvGroupName && (!el.csvGroupName.value || el.csvGroupName.value === 'Flat Expenses')) {
+        el.csvGroupName.value = file.name.replace(/\.[^/.]+$/, '');
+      }
+    }
+  });
+}
+
+safeOn(el.formCreateGroup, 'submit', async (e) => {
   e.preventDefault();
   const name = el.createGroupName.value.trim();
   const yourName = el.createYourName.value.trim();
@@ -1200,7 +1273,7 @@ el.formCreateGroup.addEventListener('submit', async (e) => {
   }
 });
 
-el.formJoinGroup.addEventListener('submit', async (e) => {
+safeOn(el.formJoinGroup, 'submit', async (e) => {
   e.preventDefault();
   const groupId = el.joinGroupId.value.trim();
   const yourName = el.joinYourName.value.trim();
@@ -1218,7 +1291,7 @@ el.formJoinGroup.addEventListener('submit', async (e) => {
   }
 });
 
-el.formManualPeer.addEventListener('submit', async (e) => {
+safeOn(el.formManualPeer, 'submit', async (e) => {
   e.preventDefault();
   const host = el.peerHost.value.trim();
   const port = parseInt(el.peerPort.value, 10);
@@ -1242,9 +1315,9 @@ document.querySelectorAll('.tabs .tab').forEach((tab) => {
     tab.classList.add('active');
 
     const targetTab = tab.getAttribute('data-tab');
-    el.tabContentExpenses.style.display = targetTab === 'expenses' ? 'block' : 'none';
-    el.tabContentBalances.style.display = targetTab === 'balances' ? 'block' : 'none';
-    el.tabContentMembers.style.display = targetTab === 'members' ? 'block' : 'none';
+    if (el.tabContentExpenses) el.tabContentExpenses.style.display = targetTab === 'expenses' ? 'block' : 'none';
+    if (el.tabContentBalances) el.tabContentBalances.style.display = targetTab === 'balances' ? 'block' : 'none';
+    if (el.tabContentMembers) el.tabContentMembers.style.display = targetTab === 'members' ? 'block' : 'none';
   });
 });
 
@@ -1256,18 +1329,26 @@ document.querySelectorAll('.bottom-nav .nav-item').forEach((item) => {
   });
 });
 
-// Header navigation
-el.brandHome.addEventListener('click', () => switchView('view-groups'));
-el.statusPill.addEventListener('click', () => switchView('view-network'));
-el.btnCertHeader.addEventListener('click', () => switchView('view-cert'));
-el.btnBackToGroups.addEventListener('click', () => switchView('view-groups'));
-el.btnCreateGroupModal.addEventListener('click', () => openModal('modal-create-group'));
-if (el.btnCreateFirstGroup) el.btnCreateFirstGroup.addEventListener('click', () => openModal('modal-create-group'));
-el.btnJoinGroupModal.addEventListener('click', () => openModal('modal-join-group'));
-el.btnManualPeerModal.addEventListener('click', () => openModal('modal-manual-peer'));
+// Header navigation & Modal Openers (Safe bindings)
+safeOn(el.btnEditProfile, 'click', () => openModal('modal-profile'));
+safeOn(el.brandHome, 'click', () => switchView('view-groups'));
+safeOn(el.statusPill, 'click', () => switchView('view-network'));
+safeOn(el.btnCertHeader, 'click', () => switchView('view-cert'));
+safeOn(el.btnBackToGroups, 'click', () => switchView('view-groups'));
+safeOn(el.btnCreateGroupModal, 'click', () => openModal('modal-create-group'));
+safeOn(el.btnCreateFirstGroup, 'click', () => openModal('modal-create-group'));
+safeOn(el.btnJoinGroupModal, 'click', () => openModal('modal-join-group'));
+safeOn(el.btnManualPeerModal, 'click', () => openModal('modal-manual-peer'));
+safeOn(el.btnImportCsvHome, 'click', () => openModal('modal-import-csv'));
 
 // Initialize on Load
-window.addEventListener('DOMContentLoaded', () => {
+function initApp() {
   connectWebSocket();
   refreshData();
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
+  initApp();
+}

@@ -52,7 +52,7 @@ public class NearbySyncService {
 
     private final Context context;
     private final String deviceId;
-    private final String deviceName;
+    private String deviceName;
     private final HlcClock hlcClock;
     private final DatabaseHelper db;
     private final OnNearbySyncListener listener;
@@ -95,6 +95,18 @@ public class NearbySyncService {
         discoveredEndpoints.clear();
         connectedEndpoints.clear();
         pendingConnections.clear();
+    }
+
+    public synchronized void updateDeviceName(String newName) {
+        if (newName == null || newName.trim().isEmpty()) return;
+        this.deviceName = newName.trim();
+        if (isRunning) {
+            try {
+                connectionsClient.stopAdvertising();
+            } catch (Exception ignored) {}
+            startAdvertising();
+            broadcastSync();
+        }
     }
 
     public List<JSONObject> getNearbyPeers() {
@@ -295,6 +307,13 @@ public class NearbySyncService {
             String remoteDeviceId = msg.getString("deviceId");
             if (remoteDeviceId.equals(deviceId)) return;
 
+            String remoteName = msg.optString("deviceName", null);
+            if (remoteName != null && !remoteName.trim().isEmpty()) {
+                discoveredEndpoints.put(endpointId, remoteName.trim());
+                connectedEndpoints.put(endpointId, remoteName.trim());
+                mainHandler.post(() -> listener.onPeerConnected(endpointId, remoteName.trim()));
+            }
+
             JSONArray remoteGroups = msg.getJSONArray("groups");
             JSONArray myGroups = db.listGroups(deviceId);
             Set<String> myGroupSet = new HashSet<>();
@@ -312,6 +331,10 @@ public class NearbySyncService {
 
             if (shared.isEmpty()) return;
 
+            // 1. Immediately push our local data for shared groups to remote peer
+            sendSyncDataForGroups(endpointId, shared);
+
+            // 2. Request remote peer's latest data for shared groups
             JSONObject req = new JSONObject();
             req.put("type", "SYNC_REQUEST");
             req.put("deviceId", deviceId);
@@ -328,6 +351,27 @@ public class NearbySyncService {
             sendPayload(endpointId, req);
         } catch (Exception e) {
             Log.e(TAG, "Error handling HELLO", e);
+        }
+    }
+
+    private void sendSyncDataForGroups(String endpointId, List<String> groupIds) {
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("type", "SYNC_DATA");
+            payload.put("deviceId", deviceId);
+            JSONObject groupsObj = new JSONObject();
+
+            for (String gid : groupIds) {
+                JSONObject gData = new JSONObject();
+                gData.put("info", db.getGroup(gid));
+                gData.put("members", db.listMembers(gid));
+                gData.put("expenses", db.listExpenses(gid, true));
+                groupsObj.put(gid, gData);
+            }
+            payload.put("groups", groupsObj);
+            sendPayload(endpointId, payload);
+        } catch (Exception e) {
+            Log.e(TAG, "Error sending sync data for groups", e);
         }
     }
 
@@ -380,10 +424,7 @@ public class NearbySyncService {
 
                 JSONObject info = gData.optJSONObject("info");
                 if (info != null) {
-                    JSONObject local = db.getGroup(gid);
-                    if (local != null && "(syncing...)".equals(local.optString("name"))) {
-                        db.updateGroupInfo(gid, info.getString("name"), info.getString("created_by"), info.getString("created_at"));
-                    }
+                    db.upsertGroupInfo(gid, info.getString("name"), info.getString("created_by"), info.getString("created_at"));
                 }
 
                 JSONArray members = gData.getJSONArray("members");

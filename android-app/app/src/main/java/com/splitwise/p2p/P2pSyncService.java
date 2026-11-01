@@ -26,7 +26,7 @@ public class P2pSyncService {
 
     private final Context context;
     private final String deviceId;
-    private final String deviceName;
+    private String deviceName;
     private final HlcClock hlcClock;
     private final DatabaseHelper db;
     private final OnSyncListener listener;
@@ -40,6 +40,7 @@ public class P2pSyncService {
     private final ExecutorService threadPool = Executors.newCachedThreadPool();
     private final Set<String> connectedPeers = Collections.synchronizedSet(new HashSet<>());
     private final Map<String, PeerInfo> discoveredPeers = new ConcurrentHashMap<>();
+    private final Set<PrintWriter> activeWriters = Collections.synchronizedSet(new HashSet<>());
     private final Queue<NsdServiceInfo> resolveQueue = new ConcurrentLinkedQueue<>();
     private final java.util.concurrent.atomic.AtomicBoolean isResolving = new java.util.concurrent.atomic.AtomicBoolean(false);
 
@@ -118,10 +119,37 @@ public class P2pSyncService {
         });
     }
 
+    public void broadcastSync() {
+        threadPool.execute(() -> {
+            synchronized (activeWriters) {
+                for (PrintWriter w : activeWriters) {
+                    try {
+                        sendHello(w);
+                    } catch (Exception ignored) {}
+                }
+            }
+            for (PeerInfo p : discoveredPeers.values()) {
+                connectToPeer(p.host, p.port);
+            }
+        });
+    }
+
+    public synchronized void updateDeviceName(String newName) {
+        if (newName == null || newName.trim().isEmpty()) return;
+        this.deviceName = newName.trim();
+        if (running) {
+            stopNsd();
+            startNsd();
+            broadcastSync();
+        }
+    }
+
     private void handleConnection(Socket socket, boolean isInitiator) {
+        PrintWriter writer = null;
         try {
             BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-            PrintWriter writer = new PrintWriter(socket.getOutputStream(), true);
+            writer = new PrintWriter(socket.getOutputStream(), true);
+            activeWriters.add(writer);
 
             // Send initial HELLO
             sendHello(writer);
@@ -143,6 +171,7 @@ public class P2pSyncService {
             }
         } catch (Exception ignored) {
         } finally {
+            if (writer != null) activeWriters.remove(writer);
             try { socket.close(); } catch (Exception ignored) {}
         }
     }
@@ -171,6 +200,15 @@ public class P2pSyncService {
 
             connectedPeers.add(remoteDeviceId);
 
+            String remoteName = msg.optString("deviceName", null);
+            if (remoteName != null && !remoteName.trim().isEmpty()) {
+                for (PeerInfo p : discoveredPeers.values()) {
+                    if (p.deviceId != null && p.deviceId.equals(remoteDeviceId)) {
+                        p.name = remoteName.trim();
+                    }
+                }
+            }
+
             JSONArray remoteGroups = msg.getJSONArray("groups");
             JSONArray myGroups = db.listGroups(deviceId);
             Set<String> myGroupSet = new HashSet<>();
@@ -190,6 +228,10 @@ public class P2pSyncService {
 
             if (shared.isEmpty()) return;
 
+            // Push our data for shared groups immediately
+            sendSyncDataForGroups(writer, shared);
+
+            // Request remote's changes
             JSONObject req = new JSONObject();
             req.put("type", "SYNC_REQUEST");
             req.put("deviceId", deviceId);
@@ -204,6 +246,25 @@ public class P2pSyncService {
             req.put("checkpoints", checkpoints);
 
             writer.println(req.toString());
+        } catch (Exception ignored) {}
+    }
+
+    private void sendSyncDataForGroups(PrintWriter writer, List<String> groupIds) {
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("type", "SYNC_DATA");
+            payload.put("deviceId", deviceId);
+            JSONObject groupsObj = new JSONObject();
+
+            for (String gid : groupIds) {
+                JSONObject gData = new JSONObject();
+                gData.put("info", db.getGroup(gid));
+                gData.put("members", db.listMembers(gid));
+                gData.put("expenses", db.listExpenses(gid, true));
+                groupsObj.put(gid, gData);
+            }
+            payload.put("groups", groupsObj);
+            writer.println(payload.toString());
         } catch (Exception ignored) {}
     }
 
@@ -254,10 +315,7 @@ public class P2pSyncService {
 
                 JSONObject info = gData.optJSONObject("info");
                 if (info != null) {
-                    JSONObject local = db.getGroup(gid);
-                    if (local != null && "(syncing...)".equals(local.optString("name"))) {
-                        db.updateGroupInfo(gid, info.getString("name"), info.getString("created_by"), info.getString("created_at"));
-                    }
+                    db.upsertGroupInfo(gid, info.getString("name"), info.getString("created_by"), info.getString("created_at"));
                 }
 
                 JSONArray members = gData.getJSONArray("members");

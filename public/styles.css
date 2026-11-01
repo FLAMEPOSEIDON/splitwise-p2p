@@ -966,3 +966,86 @@ body {
   background: rgba(255, 255, 255, 0.1);
   border-color: var(--primary);
 }
+
+/* User Profile Badge in Header */
+.user-profile-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  transition: all 0.2s ease;
+  user-select: none;
+}
+.user-profile-badge:hover, .user-profile-badge:active {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: var(--primary);
+  transform: translateY(-1px);
+}
+.user-avatar-circle {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--cyan), var(--primary));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #fff;
+}
+.user-name-text {
+  max-width: 90px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.edit-pen {
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+
+/* CSV Upload Card */
+.csv-upload-card {
+  border: 2px dashed rgba(16, 185, 129, 0.4);
+  border-radius: var(--radius-md);
+  padding: 24px 16px;
+  text-align: center;
+  cursor: pointer;
+  background: rgba(16, 185, 129, 0.04);
+  margin-bottom: 14px;
+  transition: all 0.2s ease;
+}
+.csv-upload-card:hover, .csv-upload-card:active {
+  border-color: var(--primary);
+  background: rgba(16, 185, 129, 0.1);
+  transform: translateY(-1px);
+}
+
+/* Modernized UI Polish */
+.btn {
+  transition: all 0.18s ease;
+  letter-spacing: 0.2px;
+}
+.btn:active {
+  transform: scale(0.97);
+}
+.hero-card {
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5), 0 0 20px rgba(16, 185, 129, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.group-card {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.group-card:hover, .group-card:active {
+  border-color: rgba(16, 185, 129, 0.4);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.45);
+}

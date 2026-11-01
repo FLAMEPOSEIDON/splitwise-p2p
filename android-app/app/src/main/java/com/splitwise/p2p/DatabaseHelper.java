@@ -185,6 +185,16 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         db.update("groups", cv, "id = ?", new String[]{groupId});
     }
 
+    public void upsertGroupInfo(String groupId, String name, String createdBy, String createdAt) {
+        SQLiteDatabase db = getWritableDatabase();
+        ContentValues cv = new ContentValues();
+        cv.put("id", groupId);
+        cv.put("name", name);
+        cv.put("created_by", createdBy);
+        cv.put("created_at", createdAt);
+        db.insertWithOnConflict("groups", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
     public JSONArray listGroups(String myDeviceId) {
         SQLiteDatabase db = getReadableDatabase();
         JSONArray arr = new JSONArray();
