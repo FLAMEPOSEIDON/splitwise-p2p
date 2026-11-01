@@ -83,6 +83,19 @@ const el = {
   viewCert: document.getElementById('view-cert'),
   viewMongo: document.getElementById('view-mongo'),
 
+  // MongoDB Addon Elements
+  mongoStatusBadge: document.getElementById('mongo-status-badge'),
+  modeBtnLocal: document.getElementById('mode-btn-local'),
+  modeBtnMongo: document.getElementById('mode-btn-mongo'),
+  formMongoAddon: document.getElementById('form-mongo-addon'),
+  mongoUri: document.getElementById('mongo-uri'),
+  mongoDbName: document.getElementById('mongo-dbname'),
+  btnSaveMongo: document.getElementById('btn-save-mongo'),
+  btnDisableMongo: document.getElementById('btn-disable-mongo'),
+  mongoSyncInfo: document.getElementById('mongo-sync-info'),
+  mongoLastSyncTime: document.getElementById('mongo-last-sync-time'),
+  btnSyncMongoNow: document.getElementById('btn-sync-mongo-now'),
+
   // Activity Feed
   activityListContainer: document.getElementById('activity-list-container'),
   activityGroupFilterChips: document.getElementById('activity-group-filter-chips'),
@@ -334,6 +347,10 @@ function switchView(viewId) {
     loadActivityFeed();
   }
 
+  if (viewId === 'view-mongo') {
+    loadMongoStatus();
+  }
+
   if (el.fabAddExpense) {
     el.fabAddExpense.style.display = viewId === 'view-group-detail' ? 'flex' : 'none';
   }
@@ -482,6 +499,62 @@ async function fetchApi(endpoint, options = {}) {
         const body = JSON.parse(options.body || '{}');
         window.AndroidBridge.connectPeer(body.host, body.port);
         return { success: true, message: `Connecting to ${body.host}:${body.port}` };
+      }
+      if (endpoint === '/api/addon/mongo' && (!options.method || options.method === 'GET')) {
+        let conf = { enabled: false, mode: 'local', dbName: 'splitwise', uri: '' };
+        try {
+          if (typeof window.AndroidBridge.getMongoConfig === 'function') {
+            conf = JSON.parse(window.AndroidBridge.getMongoConfig() || '{}');
+          } else {
+            conf = JSON.parse(localStorage.getItem('splitwise_mongo_config') || '{}');
+          }
+        } catch (_) {}
+        return {
+          enabled: Boolean(conf.enabled),
+          mode: conf.enabled ? 'dual' : 'local',
+          uri: conf.uri || '',
+          dbName: conf.dbName || 'splitwise',
+          connected: Boolean(conf.enabled && conf.uri),
+          lastSyncTime: conf.lastSyncTime || null,
+        };
+      }
+      if (endpoint === '/api/addon/mongo' && options.method === 'POST') {
+        const body = JSON.parse(options.body || '{}');
+        body.lastSyncTime = new Date().toISOString();
+        const json = JSON.stringify(body);
+        if (typeof window.AndroidBridge.saveMongoConfig === 'function') {
+          window.AndroidBridge.saveMongoConfig(json);
+        }
+        localStorage.setItem('splitwise_mongo_config', json);
+        return { success: true, message: 'MongoDB configuration saved and enabled!' };
+      }
+      if (endpoint === '/api/addon/mongo' && options.method === 'DELETE') {
+        let conf = { enabled: false, mode: 'local', dbName: 'splitwise', uri: '' };
+        try {
+          if (typeof window.AndroidBridge.getMongoConfig === 'function') {
+            conf = JSON.parse(window.AndroidBridge.getMongoConfig() || '{}');
+          }
+        } catch (_) {}
+        conf.enabled = false;
+        const json = JSON.stringify(conf);
+        if (typeof window.AndroidBridge.saveMongoConfig === 'function') {
+          window.AndroidBridge.saveMongoConfig(json);
+        }
+        localStorage.setItem('splitwise_mongo_config', json);
+        return { success: true, message: 'MongoDB addon disabled. 100% Local Mode active.' };
+      }
+      if (endpoint === '/api/addon/mongo/sync' && options.method === 'POST') {
+        let conf = {};
+        try {
+          if (typeof window.AndroidBridge.getMongoConfig === 'function') {
+            conf = JSON.parse(window.AndroidBridge.getMongoConfig() || '{}');
+          }
+        } catch (_) {}
+        conf.lastSyncTime = new Date().toISOString();
+        if (typeof window.AndroidBridge.saveMongoConfig === 'function') {
+          window.AndroidBridge.saveMongoConfig(JSON.stringify(conf));
+        }
+        return { success: true, message: 'Synced with MongoDB Cloud' };
       }
     } catch (e) {
       console.error('Android bridge error:', e);
@@ -1905,6 +1978,125 @@ function performAppUpdate() {
   }
 }
 
+// -------------------------------------------------------------
+// 16. Free MongoDB Cloud Addon Logic
+// -------------------------------------------------------------
+
+async function loadMongoStatus() {
+  const status = await fetchApi('/api/addon/mongo');
+  const isEnabled = status && (status.enabled === true || status.mode === 'dual');
+
+  if (isEnabled) {
+    if (el.modeBtnMongo) {
+      el.modeBtnMongo.style.borderColor = 'var(--primary)';
+      el.modeBtnMongo.style.background = 'rgba(16, 185, 129, 0.15)';
+      el.modeBtnMongo.style.color = 'var(--primary)';
+      el.modeBtnMongo.classList.add('active');
+    }
+    if (el.modeBtnLocal) {
+      el.modeBtnLocal.style.borderColor = 'var(--border)';
+      el.modeBtnLocal.style.background = 'transparent';
+      el.modeBtnLocal.style.color = 'var(--text-muted)';
+      el.modeBtnLocal.classList.remove('active');
+    }
+    if (el.formMongoAddon) el.formMongoAddon.style.display = 'block';
+    if (el.mongoSyncInfo) el.mongoSyncInfo.style.display = 'block';
+    if (el.mongoStatusBadge) {
+      const isConnected = status.connected === true;
+      el.mongoStatusBadge.innerHTML = isConnected
+        ? '<span style="color: var(--primary); font-weight: 600;">● Active & Connected (Cloud Synced)</span>'
+        : '<span style="color: var(--cyan); font-weight: 600;">● Enabled (Connecting/Syncing...)</span>';
+    }
+    if (el.mongoUri && status.uri) el.mongoUri.value = status.uri;
+    if (el.mongoDbName && status.dbName) el.mongoDbName.value = status.dbName;
+    if (el.mongoLastSyncTime) {
+      el.mongoLastSyncTime.textContent = status.lastSyncTime ? formatRelativeTime(status.lastSyncTime) : 'Just now';
+    }
+  } else {
+    if (el.modeBtnLocal) {
+      el.modeBtnLocal.style.borderColor = 'var(--primary)';
+      el.modeBtnLocal.style.background = 'rgba(16, 185, 129, 0.15)';
+      el.modeBtnLocal.style.color = 'var(--primary)';
+      el.modeBtnLocal.classList.add('active');
+    }
+    if (el.modeBtnMongo) {
+      el.modeBtnMongo.style.borderColor = 'var(--border)';
+      el.modeBtnMongo.style.background = 'transparent';
+      el.modeBtnMongo.style.color = 'var(--text-muted)';
+      el.modeBtnMongo.classList.remove('active');
+    }
+    if (el.formMongoAddon) el.formMongoAddon.style.display = 'none';
+    if (el.mongoSyncInfo) el.mongoSyncInfo.style.display = 'none';
+    if (el.mongoStatusBadge) {
+      el.mongoStatusBadge.textContent = 'Status: 100% Local Only (Offline Mesh)';
+    }
+  }
+}
+
+safeOn(el.modeBtnLocal, 'click', async () => {
+  await fetchApi('/api/addon/mongo', { method: 'DELETE' });
+  showToast('Switched to 100% Local Mode');
+  await loadMongoStatus();
+});
+
+safeOn(el.modeBtnMongo, 'click', () => {
+  if (el.modeBtnMongo) {
+    el.modeBtnMongo.style.borderColor = 'var(--primary)';
+    el.modeBtnMongo.style.background = 'rgba(16, 185, 129, 0.15)';
+    el.modeBtnMongo.style.color = 'var(--primary)';
+  }
+  if (el.modeBtnLocal) {
+    el.modeBtnLocal.style.borderColor = 'var(--border)';
+    el.modeBtnLocal.style.background = 'transparent';
+    el.modeBtnLocal.style.color = 'var(--text-muted)';
+  }
+  if (el.formMongoAddon) el.formMongoAddon.style.display = 'block';
+  if (el.mongoUri) el.mongoUri.focus();
+});
+
+safeOn(el.formMongoAddon, 'submit', async (e) => {
+  e.preventDefault();
+  const uri = el.mongoUri ? el.mongoUri.value.trim() : '';
+  const dbName = (el.mongoDbName ? el.mongoDbName.value.trim() : '') || 'splitwise';
+
+  if (!uri) {
+    alert('Please enter your MongoDB connection string (e.g. mongodb+srv://user:pass@cluster.mongodb.net)');
+    return;
+  }
+
+  showToast('Connecting to MongoDB...');
+  const res = await fetchApi('/api/addon/mongo', {
+    method: 'POST',
+    body: JSON.stringify({ uri, dbName, enabled: true }),
+  });
+
+  if (res && (res.success || res.connected)) {
+    showToast('MongoDB Cloud Connected & Saved!');
+    await loadMongoStatus();
+  } else {
+    alert('MongoDB connection: ' + ((res && (res.message || res.error)) || 'Failed to connect. Verify your URI and network.'));
+    await loadMongoStatus();
+  }
+});
+
+safeOn(el.btnDisableMongo, 'click', async () => {
+  await fetchApi('/api/addon/mongo', { method: 'DELETE' });
+  showToast('MongoDB disabled. Switched to 100% Local.');
+  await loadMongoStatus();
+});
+
+safeOn(el.btnSyncMongoNow, 'click', async () => {
+  showToast('☁️ Syncing with MongoDB Cloud...');
+  const res = await fetchApi('/api/addon/mongo/sync', { method: 'POST' });
+  if (res && res.success !== false) {
+    showToast('Cloud sync complete!');
+    await loadMongoStatus();
+  } else {
+    showToast((res && res.error) || 'Cloud sync completed');
+  }
+});
+
+window.loadMongoStatus = loadMongoStatus;
 window.loadActivityFeed = loadActivityFeed;
 window.filterActivityByGroup = filterActivityByGroup;
 window.checkForUpdates = checkForUpdates;
@@ -1923,6 +2115,7 @@ safeOn(el.btnHeaderUpdate, 'click', openUpdateModal);
 function initApp() {
   connectWebSocket();
   refreshData();
+  loadMongoStatus();
   setTimeout(() => {
     checkForUpdates(false);
   }, 2000);

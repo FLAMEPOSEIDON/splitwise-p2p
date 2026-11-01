@@ -86,4 +86,19 @@ db.exec(`
   );
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS activity_log (
+    id TEXT PRIMARY KEY,
+    group_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    icon TEXT,
+    title TEXT NOT NULL,
+    subtitle TEXT NOT NULL,
+    amount TEXT,
+    raw_amount REAL,
+    timestamp TEXT NOT NULL,
+    date TEXT
+  );
+`);
+
 module.exports = { db, DB_PATH };

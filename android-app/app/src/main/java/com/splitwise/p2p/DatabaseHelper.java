@@ -55,6 +55,18 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 "peer_device_id TEXT NOT NULL, " +
                 "last_seen_hlc TEXT NOT NULL, " +
                 "PRIMARY KEY (group_id, peer_device_id));");
+
+        db.execSQL("CREATE TABLE IF NOT EXISTS activity_log (" +
+                "id TEXT PRIMARY KEY, " +
+                "group_id TEXT NOT NULL, " +
+                "type TEXT NOT NULL, " +
+                "icon TEXT, " +
+                "title TEXT NOT NULL, " +
+                "subtitle TEXT NOT NULL, " +
+                "amount TEXT, " +
+                "raw_amount REAL, " +
+                "timestamp TEXT NOT NULL, " +
+                "date TEXT);");
     }
 
     @Override
@@ -65,6 +77,94 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         try {
             db.execSQL("ALTER TABLE expenses ADD COLUMN date TEXT;");
         } catch (Exception ignored) {}
+        ensureActivityTable(db);
+    }
+
+    public void ensureActivityTable(SQLiteDatabase db) {
+        try {
+            db.execSQL("CREATE TABLE IF NOT EXISTS activity_log (" +
+                    "id TEXT PRIMARY KEY, " +
+                    "group_id TEXT NOT NULL, " +
+                    "type TEXT NOT NULL, " +
+                    "icon TEXT, " +
+                    "title TEXT NOT NULL, " +
+                    "subtitle TEXT NOT NULL, " +
+                    "amount TEXT, " +
+                    "raw_amount REAL, " +
+                    "timestamp TEXT NOT NULL, " +
+                    "date TEXT);");
+        } catch (Exception ignored) {}
+    }
+
+    public void logActivity(String groupId, String type, String icon, String title, String subtitle, String amountStr, double rawAmount, String timestamp, String date) {
+        try {
+            SQLiteDatabase db = getWritableDatabase();
+            ensureActivityTable(db);
+            ContentValues cv = new ContentValues();
+            cv.put("id", "act_" + UUID.randomUUID().toString());
+            cv.put("group_id", groupId != null ? groupId : "");
+            cv.put("type", type != null ? type : "EXPENSE_ADDED");
+            cv.put("icon", icon != null ? icon : "📜");
+            cv.put("title", title != null ? title : "");
+            cv.put("subtitle", subtitle != null ? subtitle : "");
+            cv.put("amount", amountStr);
+            cv.put("raw_amount", rawAmount);
+            cv.put("timestamp", timestamp != null ? timestamp : nowIso());
+            cv.put("date", date != null ? date : todayDate());
+            db.insert("activity_log", null, cv);
+        } catch (Exception ignored) {}
+    }
+
+    public String getMemberName(String memberId) {
+        if (memberId == null) return "Someone";
+        SQLiteDatabase db = getReadableDatabase();
+        Cursor c = db.rawQuery("SELECT name FROM members WHERE id = ?", new String[]{memberId});
+        String name = "Someone";
+        if (c.moveToFirst()) {
+            name = c.getString(0);
+        }
+        c.close();
+        return name;
+    }
+
+    public String getGroupName(String groupId) {
+        if (groupId == null) return "Unknown Group";
+        SQLiteDatabase db = getReadableDatabase();
+        Cursor c = db.rawQuery("SELECT name FROM groups WHERE id = ?", new String[]{groupId});
+        String name = "Unknown Group";
+        if (c.moveToFirst()) {
+            name = c.getString(0);
+        }
+        c.close();
+        return name;
+    }
+
+    public String getCategoryIcon(String cat) {
+        if (cat == null) return "🧾";
+        if ("Groceries".equalsIgnoreCase(cat)) return "🥦";
+        if ("Dining out".equalsIgnoreCase(cat)) return "🍔";
+        if ("Rent".equalsIgnoreCase(cat)) return "🏠";
+        if ("Household supplies".equalsIgnoreCase(cat)) return "🧻";
+        if ("Cleaning".equalsIgnoreCase(cat)) return "🧹";
+        if ("Payment".equalsIgnoreCase(cat)) return "🤝";
+        if ("Utilities".equalsIgnoreCase(cat)) return "💡";
+        if ("Transportation".equalsIgnoreCase(cat)) return "🚗";
+        if ("Entertainment".equalsIgnoreCase(cat)) return "🎬";
+        return "🧾";
+    }
+
+    private String parseHlcTimestamp(String hlc) {
+        if (hlc == null || hlc.isEmpty()) return nowIso();
+        try {
+            String[] parts = hlc.split("-");
+            long ms = Long.parseLong(parts[0]);
+            if (ms > 0) {
+                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
+                sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
+                return sdf.format(new Date(ms));
+            }
+        } catch (Exception ignored) {}
+        return nowIso();
     }
 
     private String nowIso() {
@@ -327,6 +427,13 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         cv.put("updated_hlc", hlc);
         db.insert("expenses", null, cv);
 
+        // Record initial addition in activity log
+        String payerName = getMemberName(paidBy);
+        String gName = getGroupName(groupId);
+        String icon = getCategoryIcon(cat);
+        String amtStr = "₹" + String.format(Locale.US, "%.2f", amount);
+        logActivity(groupId, "EXPENSE_ADDED", icon, payerName + " added \"" + desc + "\"", "in " + gName + " • " + cat, amtStr, amount, nowIso(), expDate);
+
         try {
             JSONObject exp = new JSONObject();
             exp.put("id", id);
@@ -348,6 +455,18 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public void deleteExpense(HlcClock clock, String expenseId) {
         SQLiteDatabase db = getWritableDatabase();
         String hlc = clock.tick();
+
+        Cursor c = db.rawQuery("SELECT group_id, description, amount, paid_by FROM expenses WHERE id = ?", new String[]{expenseId});
+        if (c.moveToFirst()) {
+            String gid = c.getString(0);
+            String desc = c.getString(1);
+            double amt = c.getDouble(2);
+            String payer = getMemberName(c.getString(3));
+            String gName = getGroupName(gid);
+            logActivity(gid, "EXPENSE_DELETED", "🗑️", payer + " deleted an expense", "\"" + desc + "\" (₹" + String.format(Locale.US, "%.2f", amt) + ") in " + gName, null, 0, nowIso(), todayDate());
+        }
+        c.close();
+
         ContentValues cv = new ContentValues();
         cv.put("deleted", 1);
         cv.put("updated_hlc", hlc);
@@ -360,6 +479,19 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         String expDate = date != null && !date.isEmpty() ? date : todayDate();
         String cat = category != null && !category.isEmpty() ? category : "General";
 
+        // 1. Fetch previous state before modifying
+        String oldGid = "";
+        String oldDesc = desc;
+        double oldAmt = amount;
+        Cursor oldCur = db.rawQuery("SELECT group_id, description, amount, paid_by FROM expenses WHERE id = ?", new String[]{expenseId});
+        if (oldCur.moveToFirst()) {
+            oldGid = oldCur.getString(0);
+            oldDesc = oldCur.getString(1);
+            oldAmt = oldCur.getDouble(2);
+        }
+        oldCur.close();
+
+        // 2. Perform database update
         ContentValues cv = new ContentValues();
         cv.put("description", desc);
         cv.put("amount", amount);
@@ -369,6 +501,22 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         cv.put("date", expDate);
         cv.put("updated_hlc", hlc);
         db.update("expenses", cv, "id = ?", new String[]{expenseId});
+
+        // 3. Log the change to Activity Feed history (e.g. "Changed amount from ₹100.00 to ₹150.00")
+        String payerName = getMemberName(paidBy);
+        String gName = getGroupName(oldGid);
+        String changeDetails;
+        if (Math.abs(oldAmt - amount) > 0.001 && !oldDesc.equals(desc)) {
+            changeDetails = "Changed \"" + oldDesc + "\" to \"" + desc + "\" & amount from ₹" + String.format(Locale.US, "%.2f", oldAmt) + " to ₹" + String.format(Locale.US, "%.2f", amount);
+        } else if (Math.abs(oldAmt - amount) > 0.001) {
+            changeDetails = "Changed amount from ₹" + String.format(Locale.US, "%.2f", oldAmt) + " to ₹" + String.format(Locale.US, "%.2f", amount);
+        } else if (!oldDesc.equals(desc)) {
+            changeDetails = "Changed name from \"" + oldDesc + "\" to \"" + desc + "\"";
+        } else {
+            changeDetails = "Updated expense details";
+        }
+        String amtStr = "₹" + String.format(Locale.US, "%.2f", amount);
+        logActivity(oldGid, "EXPENSE_UPDATED", "✏️", payerName + " updated \"" + desc + "\"", changeDetails + " in " + gName, amtStr, amount, nowIso(), expDate);
 
         try {
             JSONObject exp = new JSONObject();
@@ -877,7 +1025,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     }
 
     public JSONArray getActivityFeed(String targetGroupId) {
-        SQLiteDatabase db = getReadableDatabase();
+        SQLiteDatabase db = getWritableDatabase();
+        ensureActivityTable(db);
         JSONArray activities = new JSONArray();
 
         // 1. Group Map
@@ -902,98 +1051,68 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             mCur.close();
         }
 
-        // 3. Expenses
-        String expSql = (targetGroupId != null && !targetGroupId.isEmpty())
-                ? "SELECT * FROM expenses WHERE group_id = ? ORDER BY hlc DESC LIMIT 100"
-                : "SELECT * FROM expenses ORDER BY hlc DESC LIMIT 100";
-        String[] expArgs = (targetGroupId != null && !targetGroupId.isEmpty())
-                ? new String[]{targetGroupId} : null;
+        // 3. Auto-backfill existing expenses into activity_log if missing
+        try {
+            Cursor bCur = db.rawQuery("SELECT e.id, e.group_id, e.description, e.amount, e.paid_by, e.category, e.date, e.hlc, e.deleted FROM expenses e WHERE NOT EXISTS (SELECT 1 FROM activity_log a WHERE a.group_id = e.group_id AND a.title LIKE '%' || e.description || '%')", null);
+            while (bCur.moveToNext()) {
+                String eGid = bCur.getString(1);
+                String eDesc = bCur.getString(2);
+                double eAmt = bCur.getDouble(3);
+                String ePayer = memberMap.getOrDefault(bCur.getString(4), "Someone");
+                String eCat = bCur.getString(5);
+                String eDate = bCur.getString(6);
+                String eHlc = bCur.getString(7);
+                int isDel = bCur.getInt(8);
+                String ts = parseHlcTimestamp(eHlc);
+                String amtStr = "₹" + String.format(Locale.US, "%.2f", eAmt);
+                String gName = groupMap.getOrDefault(eGid, "Unknown Group");
+
+                boolean isPay = (eCat != null && eCat.equalsIgnoreCase("Payment")) || eDesc.toLowerCase().startsWith("payment:");
+                if (isDel == 1) {
+                    logActivity(eGid, "EXPENSE_DELETED", "🗑️", ePayer + " deleted an expense", "\"" + eDesc + "\" (" + amtStr + ") in " + gName, null, 0, ts, eDate);
+                } else if (isPay) {
+                    logActivity(eGid, "PAYMENT_RECORDED", "🤝", ePayer + " recorded payment", "\"" + eDesc + "\" (" + amtStr + ") in " + gName, amtStr, eAmt, ts, eDate);
+                } else {
+                    logActivity(eGid, "EXPENSE_ADDED", getCategoryIcon(eCat), ePayer + " added \"" + eDesc + "\"", "in " + gName + " • " + (eCat != null ? eCat : "General"), amtStr, eAmt, ts, eDate);
+                }
+            }
+            bCur.close();
+        } catch (Exception ignored) {}
 
         List<JSONObject> list = new ArrayList<>();
-        Cursor eCur = db.rawQuery(expSql, expArgs);
+
+        // 4. Query from activity_log table (contains both original adds and detailed update history!)
+        String actSql = (targetGroupId != null && !targetGroupId.isEmpty())
+                ? "SELECT * FROM activity_log WHERE group_id = ? ORDER BY timestamp DESC LIMIT 200"
+                : "SELECT * FROM activity_log ORDER BY timestamp DESC LIMIT 250";
+        String[] actArgs = (targetGroupId != null && !targetGroupId.isEmpty()) ? new String[]{targetGroupId} : null;
+
+        Cursor aCur = db.rawQuery(actSql, actArgs);
         try {
-            while (eCur.moveToNext()) {
+            while (aCur.moveToNext()) {
                 try {
-                    String gid = eCur.getString(eCur.getColumnIndexOrThrow("group_id"));
-                    String gName = groupMap.getOrDefault(gid, "Unknown Group");
-                    String paidBy = eCur.getString(eCur.getColumnIndexOrThrow("paid_by"));
-                    String payerName = memberMap.getOrDefault(paidBy, "Someone");
-                    String desc = eCur.getString(eCur.getColumnIndexOrThrow("description"));
-                    double amt = eCur.getDouble(eCur.getColumnIndexOrThrow("amount"));
-                    String cat = eCur.getString(eCur.getColumnIndexOrThrow("category"));
-                    int deleted = eCur.getInt(eCur.getColumnIndexOrThrow("deleted"));
-                    String hlc = eCur.getString(eCur.getColumnIndexOrThrow("hlc"));
-                    String date = eCur.getString(eCur.getColumnIndexOrThrow("date"));
-                    String id = eCur.getString(eCur.getColumnIndexOrThrow("id"));
-
-                    String timestamp = nowIso();
-                    try {
-                        String[] parts = hlc.split("-");
-                        long ms = Long.parseLong(parts[0]);
-                        if (ms > 0) {
-                            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
-                            sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
-                            timestamp = sdf.format(new Date(ms));
-                        }
-                    } catch (Exception ignored) {}
-
-                    boolean isPayment = (cat != null && cat.equalsIgnoreCase("Payment")) ||
-                            desc.toLowerCase().startsWith("payment:");
-
                     JSONObject act = new JSONObject();
-                    act.put("id", "exp_" + id);
+                    String gid = aCur.getString(aCur.getColumnIndexOrThrow("group_id"));
+                    act.put("id", aCur.getString(aCur.getColumnIndexOrThrow("id")));
+                    act.put("type", aCur.getString(aCur.getColumnIndexOrThrow("type")));
+                    act.put("icon", aCur.getString(aCur.getColumnIndexOrThrow("icon")));
+                    act.put("title", aCur.getString(aCur.getColumnIndexOrThrow("title")));
+                    act.put("subtitle", aCur.getString(aCur.getColumnIndexOrThrow("subtitle")));
+                    String amt = aCur.getString(aCur.getColumnIndexOrThrow("amount"));
+                    act.put("amount", (amt != null && !amt.isEmpty()) ? amt : JSONObject.NULL);
+                    act.put("rawAmount", aCur.getDouble(aCur.getColumnIndexOrThrow("raw_amount")));
+                    act.put("timestamp", aCur.getString(aCur.getColumnIndexOrThrow("timestamp")));
+                    act.put("date", aCur.getString(aCur.getColumnIndexOrThrow("date")));
                     act.put("groupId", gid);
-                    act.put("groupName", gName);
-                    act.put("timestamp", timestamp);
-                    act.put("date", date);
-                    act.put("rawAmount", amt);
-
-                    if (deleted == 1) {
-                        act.put("type", "EXPENSE_DELETED");
-                        act.put("icon", "🗑️");
-                        act.put("title", payerName + " deleted an expense");
-                        act.put("subtitle", "\"" + desc + "\" (₹" + String.format(Locale.US, "%.2f", amt) + ") in " + gName);
-                        act.put("amount", JSONObject.NULL);
-                    } else if (isPayment) {
-                        String recName = "Someone";
-                        try {
-                            String splitJson = eCur.getString(eCur.getColumnIndexOrThrow("split_between"));
-                            JSONArray splitArr = new JSONArray(splitJson);
-                            if (splitArr.length() > 0) {
-                                Object o = splitArr.get(0);
-                                String rId = (o instanceof JSONObject) ? ((JSONObject) o).getString("memberId") : o.toString();
-                                recName = memberMap.getOrDefault(rId, "Someone");
-                            }
-                        } catch (Exception ignored) {}
-
-                        act.put("type", "PAYMENT_RECORDED");
-                        act.put("icon", "🤝");
-                        act.put("title", payerName + " paid " + recName);
-                        act.put("subtitle", "Settled ₹" + String.format(Locale.US, "%.2f", amt) + " in " + gName);
-                        act.put("amount", "₹" + String.format(Locale.US, "%.2f", amt));
-                    } else {
-                        String icon = "🧾";
-                        if ("Groceries".equals(cat)) icon = "🥦";
-                        else if ("Dining out".equals(cat)) icon = "🍔";
-                        else if ("Rent".equals(cat)) icon = "🏠";
-                        else if ("Household supplies".equals(cat)) icon = "🧻";
-                        else if ("Cleaning".equals(cat)) icon = "🧹";
-                        else if ("Transportation".equals(cat)) icon = "🚗";
-
-                        act.put("type", "EXPENSE_ADDED");
-                        act.put("icon", icon);
-                        act.put("title", payerName + " added \"" + desc + "\"");
-                        act.put("subtitle", "in " + gName + " • " + (cat != null ? cat : "General"));
-                        act.put("amount", "₹" + String.format(Locale.US, "%.2f", amt));
-                    }
+                    act.put("groupName", groupMap.getOrDefault(gid, "Unknown Group"));
                     list.add(act);
                 } catch (Exception ignored) {}
             }
         } finally {
-            eCur.close();
+            aCur.close();
         }
 
-        // 4. Member joins
+        // 5. Member joins
         String mSql = (targetGroupId != null && !targetGroupId.isEmpty())
                 ? "SELECT * FROM members WHERE group_id = ? ORDER BY joined_at DESC LIMIT 20"
                 : "SELECT * FROM members ORDER BY joined_at DESC LIMIT 30";
@@ -1028,7 +1147,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             mJoinCur.close();
         }
 
-        // 5. Group creations
+        // 6. Group creations
         String gSql = (targetGroupId != null && !targetGroupId.isEmpty())
                 ? "SELECT * FROM groups WHERE id = ?"
                 : "SELECT * FROM groups ORDER BY created_at DESC LIMIT 20";

@@ -103,6 +103,51 @@ function listMembers(groupId) {
     .all(groupId);
 }
 
+function getMemberName(memberId) {
+  if (!memberId) return 'Someone';
+  try {
+    const row = db.prepare('SELECT name FROM members WHERE id = ?').get(memberId);
+    return row && row.name ? row.name : 'Someone';
+  } catch (_) {
+    return 'Someone';
+  }
+}
+
+function getGroupName(groupId) {
+  if (!groupId) return 'Group';
+  try {
+    const row = db.prepare('SELECT name FROM groups WHERE id = ?').get(groupId);
+    return row && row.name ? row.name : 'Group';
+  } catch (_) {
+    return 'Group';
+  }
+}
+
+function getCategoryIcon(category) {
+  if (!category) return '🧾';
+  const c = category.toLowerCase();
+  if (c === 'groceries') return '🥦';
+  if (c === 'dining out') return '🍔';
+  if (c === 'rent') return '🏠';
+  if (c === 'household supplies') return '🧻';
+  if (c === 'cleaning') return '🧹';
+  if (c === 'transportation') return '🚗';
+  if (c === 'payment') return '🤝';
+  return '🧾';
+}
+
+function logActivity(groupId, type, icon, title, subtitle, amount, rawAmount, timestamp, date) {
+  const id = randomUUID();
+  const ts = timestamp || new Date().toISOString();
+  const d = date || ts.split('T')[0];
+  try {
+    db.prepare(`
+      INSERT INTO activity_log (id, group_id, type, icon, title, subtitle, amount, raw_amount, timestamp, date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, groupId, type, icon, title, subtitle, amount || null, rawAmount || 0, ts, d);
+  } catch (_) {}
+}
+
 /**
  * Add an expense.
  * `splitBetween` can be:
@@ -141,11 +186,34 @@ function addExpense(hlcClock, {
     hlc
   );
 
+  // Record initial addition in activity log
+  const isPayment = (category && category.toLowerCase() === 'payment') ||
+    (description && description.toLowerCase().startsWith('payment:'));
+  const payerName = getMemberName(paidBy);
+  const gName = getGroupName(groupId);
+  const amtStr = `₹${Number(amount).toFixed(2)}`;
+  if (isPayment) {
+    logActivity(groupId, 'PAYMENT_RECORDED', '🤝', `${payerName} recorded payment`, `"${description}" (${amtStr}) in ${gName}`, amtStr, amount, new Date().toISOString(), expenseDate);
+  } else {
+    logActivity(groupId, 'EXPENSE_ADDED', getCategoryIcon(category), `${payerName} added "${description}"`, `in ${gName} • ${category}`, amtStr, amount, new Date().toISOString(), expenseDate);
+  }
+
   return { id, groupId, description, amount, paidBy, splitBetween, category, date: expenseDate, hlc };
 }
 
 function deleteExpense(hlcClock, expenseId) {
   const hlc = hlcClock.tick();
+
+  try {
+    const row = db.prepare('SELECT group_id, description, amount, paid_by FROM expenses WHERE id = ?').get(expenseId);
+    if (row) {
+      const payerName = getMemberName(row.paid_by);
+      const gName = getGroupName(row.group_id);
+      const amtStr = `₹${Number(row.amount).toFixed(2)}`;
+      logActivity(row.group_id, 'EXPENSE_DELETED', '🗑️', `${payerName} deleted an expense`, `"${row.description}" (${amtStr}) in ${gName}`, null, 0, new Date().toISOString(), new Date().toISOString().split('T')[0]);
+    }
+  } catch (_) {}
+
   db.prepare(`UPDATE expenses SET deleted = 1, updated_hlc = ? WHERE id = ?`).run(
     hlc,
     expenseId
@@ -163,6 +231,19 @@ function updateExpense(hlcClock, expenseId, {
 }) {
   const hlc = hlcClock.tick();
   const expenseDate = date || new Date().toISOString().split('T')[0];
+
+  // 1. Fetch previous state before modifying
+  let oldGid = '';
+  let oldDesc = description;
+  let oldAmt = amount;
+  try {
+    const oldRow = db.prepare('SELECT group_id, description, amount, paid_by FROM expenses WHERE id = ?').get(expenseId);
+    if (oldRow) {
+      oldGid = oldRow.group_id;
+      oldDesc = oldRow.description;
+      oldAmt = oldRow.amount;
+    }
+  } catch (_) {}
 
   db.prepare(
     `UPDATE expenses SET
@@ -184,6 +265,20 @@ function updateExpense(hlcClock, expenseId, {
     hlc,
     expenseId
   );
+
+  // 2. Log change details to activity_log
+  const payerName = getMemberName(paidBy);
+  const gName = getGroupName(oldGid);
+  let changeDetails = 'Updated expense details';
+  if (Math.abs(oldAmt - amount) > 0.001 && oldDesc !== description) {
+    changeDetails = `Changed "${oldDesc}" to "${description}" & amount from ₹${Number(oldAmt).toFixed(2)} to ₹${Number(amount).toFixed(2)}`;
+  } else if (Math.abs(oldAmt - amount) > 0.001) {
+    changeDetails = `Changed amount from ₹${Number(oldAmt).toFixed(2)} to ₹${Number(amount).toFixed(2)}`;
+  } else if (oldDesc !== description) {
+    changeDetails = `Changed name from "${oldDesc}" to "${description}"`;
+  }
+  const amtStr = `₹${Number(amount).toFixed(2)}`;
+  logActivity(oldGid, 'EXPENSE_UPDATED', '✏️', `${payerName} updated "${description}"`, `${changeDetails} in ${gName}`, amtStr, amount, new Date().toISOString(), expenseDate);
 
   return { id: expenseId, description, amount, paidBy, splitBetween, category, date: expenseDate, updated_hlc: hlc };
 }
@@ -590,92 +685,68 @@ function getActivityFeed(limit = 100, targetGroupId = null) {
   const allMembers = db.prepare(`SELECT * FROM members`).all();
   const memberMap = Object.fromEntries(allMembers.map((m) => [m.id, m.name]));
 
-  // 2. Query expenses
-  const expQuery = targetGroupId
-    ? db.prepare(`SELECT * FROM expenses WHERE group_id = ? ORDER BY hlc DESC LIMIT ?`).all(targetGroupId, limit)
-    : db.prepare(`SELECT * FROM expenses ORDER BY hlc DESC LIMIT ?`).all(limit);
+  // 2. Auto-backfill existing expenses into activity_log if missing
+  try {
+    const existingExpenses = db.prepare(`
+      SELECT e.id, e.group_id, e.description, e.amount, e.paid_by, e.category, e.date, e.hlc, e.deleted
+      FROM expenses e
+      WHERE NOT EXISTS (
+        SELECT 1 FROM activity_log a WHERE a.group_id = e.group_id AND a.title LIKE '%' || e.description || '%'
+      )
+    `).all();
 
-  for (const exp of expQuery) {
-    const groupName = groupMap[exp.group_id] || 'Unknown Group';
-    const payerName = memberMap[exp.paid_by] || 'Someone';
+    for (const exp of existingExpenses) {
+      const eGid = exp.group_id;
+      const eDesc = exp.description;
+      const eAmt = exp.amount;
+      const ePayer = memberMap[exp.paid_by] || 'Someone';
+      const eCat = exp.category || 'General';
+      const eDate = exp.date || new Date().toISOString().split('T')[0];
+      const gName = groupMap[eGid] || 'Unknown Group';
+      const amtStr = `₹${Number(eAmt).toFixed(2)}`;
 
-    // Parse timestamp from HLC: format is "<physical_ms_padded>-<counter>-<deviceId>"
-    let timestamp = null;
-    try {
-      const parts = exp.updated_hlc ? exp.updated_hlc.split('-') : exp.hlc.split('-');
-      const ms = parseInt(parts[0], 10);
-      if (!isNaN(ms) && ms > 0) {
-        timestamp = new Date(ms).toISOString();
-      }
-    } catch (_) {}
-
-    if (!timestamp) {
-      timestamp = exp.date ? new Date(exp.date).toISOString() : new Date().toISOString();
-    }
-
-    const isPayment = (exp.category && exp.category.toLowerCase() === 'payment') ||
-      exp.description.toLowerCase().startsWith('payment:');
-
-    if (exp.deleted) {
-      activities.push({
-        id: `del_${exp.id}`,
-        type: 'EXPENSE_DELETED',
-        icon: '🗑️',
-        title: `${payerName} deleted an expense`,
-        subtitle: `"${exp.description}" (₹${exp.amount.toFixed(2)}) in ${groupName}`,
-        amount: null,
-        rawAmount: exp.amount,
-        groupId: exp.group_id,
-        groupName,
-        timestamp,
-        date: exp.date,
-      });
-    } else if (isPayment) {
-      let receiverName = 'Someone';
+      let ts = null;
       try {
-        const split = JSON.parse(exp.split_between);
-        if (split.length > 0) {
-          const recId = typeof split[0] === 'object' ? split[0].memberId : split[0];
-          receiverName = memberMap[recId] || receiverName;
-        }
+        const parts = exp.hlc.split('-');
+        const ms = parseInt(parts[0], 10);
+        if (!isNaN(ms) && ms > 0) ts = new Date(ms).toISOString();
       } catch (_) {}
+      if (!ts) ts = exp.date ? new Date(exp.date).toISOString() : new Date().toISOString();
 
-      activities.push({
-        id: `pay_${exp.id}`,
-        type: 'PAYMENT_RECORDED',
-        icon: '🤝',
-        title: `${payerName} paid ${receiverName}`,
-        subtitle: `Settled ₹${exp.amount.toFixed(2)} in ${groupName}`,
-        amount: `₹${exp.amount.toFixed(2)}`,
-        rawAmount: exp.amount,
-        groupId: exp.group_id,
-        groupName,
-        timestamp,
-        date: exp.date,
-      });
-    } else {
-      activities.push({
-        id: `exp_${exp.id}`,
-        type: 'EXPENSE_ADDED',
-        icon: exp.category === 'Groceries' ? '🥦' :
-              exp.category === 'Dining out' ? '🍔' :
-              exp.category === 'Rent' ? '🏠' :
-              exp.category === 'Household supplies' ? '🧻' :
-              exp.category === 'Cleaning' ? '🧹' :
-              exp.category === 'Transportation' ? '🚗' : '🧾',
-        title: `${payerName} added "${exp.description}"`,
-        subtitle: `in ${groupName} • ${exp.category || 'General'}`,
-        amount: `₹${exp.amount.toFixed(2)}`,
-        rawAmount: exp.amount,
-        groupId: exp.group_id,
-        groupName,
-        timestamp,
-        date: exp.date,
-      });
+      const isPay = (eCat && eCat.toLowerCase() === 'payment') || (eDesc && eDesc.toLowerCase().startsWith('payment:'));
+      if (exp.deleted) {
+        logActivity(eGid, 'EXPENSE_DELETED', '🗑️', `${ePayer} deleted an expense`, `"${eDesc}" (${amtStr}) in ${gName}`, null, 0, ts, eDate);
+      } else if (isPay) {
+        logActivity(eGid, 'PAYMENT_RECORDED', '🤝', `${ePayer} recorded payment`, `"${eDesc}" (${amtStr}) in ${gName}`, amtStr, eAmt, ts, eDate);
+      } else {
+        logActivity(eGid, 'EXPENSE_ADDED', getCategoryIcon(eCat), `${ePayer} added "${eDesc}"`, `in ${gName} • ${eCat}`, amtStr, eAmt, ts, eDate);
+      }
     }
+  } catch (_) {}
+
+  // 3. Query from activity_log table (contains both original adds and detailed update history!)
+  const actRows = targetGroupId
+    ? db.prepare(`SELECT * FROM activity_log WHERE group_id = ? ORDER BY timestamp DESC LIMIT 200`).all(targetGroupId)
+    : db.prepare(`SELECT * FROM activity_log ORDER BY timestamp DESC LIMIT 250`).all();
+
+  for (const row of actRows) {
+    const groupName = groupMap[row.group_id] || 'Unknown Group';
+    activities.push({
+      id: row.id,
+      type: row.type,
+      icon: row.icon,
+      title: row.title,
+      subtitle: row.subtitle,
+      amount: row.amount,
+      rawAmount: row.raw_amount,
+      groupId: row.group_id,
+      groupName,
+      timestamp: row.timestamp,
+      date: row.date,
+    });
   }
 
-  // 3. Member joins
+  // 4. Member joins
   const memberQuery = targetGroupId
     ? db.prepare(`SELECT * FROM members WHERE group_id = ? ORDER BY joined_at DESC LIMIT 20`).all(targetGroupId)
     : db.prepare(`SELECT * FROM members ORDER BY joined_at DESC LIMIT 30`).all();

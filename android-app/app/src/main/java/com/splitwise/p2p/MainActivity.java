@@ -639,6 +639,19 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         }
 
         @JavascriptInterface
+        public String getMongoConfig() {
+            return getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString("mongo_config", "{\"enabled\":false}");
+        }
+
+        @JavascriptInterface
+        public void saveMongoConfig(String json) {
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .edit()
+                    .putString("mongo_config", json)
+                    .apply();
+        }
+
+        @JavascriptInterface
         public String getAppVersion() {
             try {
                 android.content.pm.PackageInfo pInfo = getPackageManager().getPackageInfo(getPackageName(), 0);
