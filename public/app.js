@@ -16,6 +16,9 @@ const state = {
   activeView: 'view-groups',
   activeGroupId: null,
   activeDetailTab: 'expenses',
+  activeChatConversationId: null,
+  activeChatConversationType: null, // 'GROUP' or 'DIRECT'
+  activeChatPeerName: null,
   info: null,
   groups: [],
   currentGroupData: null,
@@ -381,9 +384,19 @@ window.addEventListener('click', (e) => {
   }
 });
 
+function updateFabVisibility() {
+  if (!el.fabAddExpense) return;
+  if (state.activeView === 'view-group-detail' && (!state.activeDetailTab || state.activeDetailTab === 'expenses')) {
+    el.fabAddExpense.style.display = 'flex';
+  } else {
+    el.fabAddExpense.style.display = 'none';
+  }
+}
+window.updateFabVisibility = updateFabVisibility;
+
 function switchView(viewId, isBack = false) {
   state.activeView = viewId;
-  const views = ['view-groups', 'view-activity', 'view-group-detail', 'view-network', 'view-cert', 'view-mongo'];
+  const views = ['view-groups', 'view-chat', 'view-activity', 'view-group-detail', 'view-network', 'view-cert', 'view-mongo'];
   views.forEach((v) => {
     const elem = document.getElementById(v);
     if (elem) elem.style.display = v === viewId ? 'block' : 'none';
@@ -395,6 +408,10 @@ function switchView(viewId, isBack = false) {
     } catch (_) {}
   }
 
+  if (viewId === 'view-chat') {
+    initChatView();
+  }
+
   if (viewId === 'view-activity') {
     loadActivityFeed();
   }
@@ -403,9 +420,7 @@ function switchView(viewId, isBack = false) {
     loadMongoStatus();
   }
 
-  if (el.fabAddExpense) {
-    el.fabAddExpense.style.display = viewId === 'view-group-detail' ? 'flex' : 'none';
-  }
+  updateFabVisibility();
 
   document.querySelectorAll('.bottom-nav .nav-item').forEach((item) => {
     if (item.getAttribute('data-view') === viewId) item.classList.add('active');
@@ -427,11 +442,17 @@ if (isNativeApp) {
       if (state.activeGroupId) {
         loadGroupDetail(state.activeGroupId, false);
       }
+      if (state.activeChatConversationId) {
+        loadMessages(state.activeChatConversationId);
+      }
       if (state.activeView === 'view-activity') {
         loadActivityFeed();
       }
     } else if (eventType && eventType.includes('PEER')) {
       loadInfo();
+      if (state.activeView === 'view-chat') {
+        renderChatConversationChips(state.activeChatConversationId);
+      }
     }
   };
 
@@ -786,9 +807,12 @@ function renderPeers(peers) {
           <div class="group-meta" style="font-size: 0.78rem; color: var(--text-muted);">${escapeHtml(p.type || 'Quick Share Mesh')} ${p.host ? '• ' + p.host : ''}</div>
         </div>
       </div>
-      <div class="status-pill" style="border-color: ${isConnected ? 'var(--primary)' : 'var(--cyan)'}; background: ${isConnected ? 'rgba(16, 185, 129, 0.15)' : 'rgba(6, 182, 212, 0.15)'};">
-        <div class="status-dot ${isConnected ? 'online' : 'syncing'}"></div>
-        <span style="font-size: 0.78rem; font-weight: 600; color: ${isConnected ? 'var(--primary)' : 'var(--cyan)'};">${isConnected ? 'Connected' : 'Discovered'}</span>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <button class="btn btn-secondary btn-sm" onclick="startDirectChatWithPeer('${escapeHtml(p.deviceId || '')}', '${escapeHtml(displayName)}')">💬 Chat</button>
+        <div class="status-pill" style="border-color: ${isConnected ? 'var(--primary)' : 'var(--cyan)'}; background: ${isConnected ? 'rgba(16, 185, 129, 0.15)' : 'rgba(6, 182, 212, 0.15)'};">
+          <div class="status-dot ${isConnected ? 'online' : 'syncing'}"></div>
+          <span style="font-size: 0.78rem; font-weight: 600; color: ${isConnected ? 'var(--primary)' : 'var(--cyan)'};">${isConnected ? 'Connected' : 'Discovered'}</span>
+        </div>
       </div>
     </div>
   `;
@@ -1064,6 +1088,7 @@ async function openGroupDetail(groupId) {
   });
 
   switchView('view-group-detail');
+  switchDetailTab('expenses');
   await loadGroupDetail(groupId);
 }
 
@@ -2080,6 +2105,8 @@ function switchDetailTab(targetTab) {
   const tabContentChat = document.getElementById('tab-content-chat');
   if (tabContentChat) tabContentChat.style.display = targetTab === 'chat' ? 'block' : 'none';
 
+  updateFabVisibility();
+
   if (targetTab === 'chat' && state.activeGroupId) {
     loadMessages(state.activeGroupId);
   }
@@ -2093,23 +2120,204 @@ document.querySelectorAll('.tabs .tab').forEach((tab) => {
   });
 });
 
-// Chat Messages Logic
-async function loadMessages(groupId) {
-  const container = document.getElementById('chat-messages-container');
-  if (!container) return;
+// -------------------------------------------------------------
+// Dedicated Chat View & Direct 1-on-1 Nearby Mesh Messaging
+// -------------------------------------------------------------
 
-  const messages = await fetchApi(`/api/groups/${groupId}/messages`);
-  renderMessages(messages || []);
+function getDirectChatId(dev1, dev2) {
+  if (!dev1) dev1 = '';
+  if (!dev2) dev2 = '';
+  return dev1 < dev2 ? `dm_${dev1}_${dev2}` : `dm_${dev2}_${dev1}`;
+}
+window.getDirectChatId = getDirectChatId;
+
+function initChatView(preferredConvId) {
+  const chipsContainer = document.getElementById('chat-conversation-chips');
+  const emptyState = document.getElementById('main-chat-empty-conversations');
+  const chatWrapper = document.getElementById('main-chat-wrapper');
+  const countBadge = document.getElementById('chat-picker-count');
+
+  const groups = state.groups || [];
+  const peers = (state.info && state.info.peers) || [];
+  const myDeviceId = (state.info && state.info.deviceId) || '';
+
+  const validPeers = peers.filter((p) => p.deviceId && p.deviceId !== myDeviceId);
+  const totalConvs = groups.length + validPeers.length;
+
+  if (countBadge) countBadge.textContent = `${totalConvs} available`;
+
+  if (totalConvs === 0) {
+    if (chipsContainer) chipsContainer.innerHTML = '';
+    if (emptyState) emptyState.style.display = 'block';
+    if (chatWrapper) chatWrapper.style.display = 'none';
+    const titleEl = document.getElementById('main-chat-header-title');
+    const statusEl = document.getElementById('main-chat-header-status');
+    if (titleEl) titleEl.textContent = 'No Conversations';
+    if (statusEl) statusEl.textContent = 'Create a group or discover nearby peers';
+    return;
+  }
+
+  if (emptyState) emptyState.style.display = 'none';
+  if (chatWrapper) chatWrapper.style.display = 'flex';
+
+  let selectedId = preferredConvId;
+  if (!selectedId) {
+    if (state.activeChatConversationId) {
+      const isGroup = groups.some((g) => g.id === state.activeChatConversationId);
+      const isPeer = validPeers.some((p) => getDirectChatId(myDeviceId, p.deviceId) === state.activeChatConversationId);
+      if (isGroup || isPeer) selectedId = state.activeChatConversationId;
+    }
+  }
+
+  if (!selectedId) {
+    if (state.activeGroupId && groups.some((g) => g.id === state.activeGroupId)) {
+      selectedId = state.activeGroupId;
+    } else if (groups.length > 0) {
+      selectedId = groups[0].id;
+    } else if (validPeers.length > 0) {
+      selectedId = getDirectChatId(myDeviceId, validPeers[0].deviceId);
+    }
+  }
+
+  renderChatConversationChips(selectedId);
+}
+window.initChatView = initChatView;
+
+function renderChatConversationChips(selectedConvId) {
+  const chipsContainer = document.getElementById('chat-conversation-chips');
+  if (!chipsContainer) return;
+
+  const groups = state.groups || [];
+  const peers = (state.info && state.info.peers) || [];
+  const myDeviceId = (state.info && state.info.deviceId) || '';
+  const validPeers = peers.filter((p) => p.deviceId && p.deviceId !== myDeviceId);
+
+  let html = '';
+
+  // 1. Groups
+  groups.forEach((g) => {
+    const isSelected = g.id === selectedConvId;
+    html += `
+      <div class="chat-conv-chip ${isSelected ? 'active' : ''}" 
+           data-conv-id="${escapeHtml(g.id)}" 
+           data-conv-type="GROUP"
+           onclick="selectChatConversation('${escapeHtml(g.id)}', 'GROUP', '${escapeHtml(g.name)}')">
+        <span>👥</span>
+        <span>${escapeHtml(g.name)}</span>
+      </div>
+    `;
+  });
+
+  // 2. Discovered Nearby Peers
+  validPeers.forEach((p) => {
+    const pName = p.name || 'Nearby Friend';
+    const dmId = getDirectChatId(myDeviceId, p.deviceId);
+    const isSelected = dmId === selectedConvId;
+    html += `
+      <div class="chat-conv-chip ${isSelected ? 'active' : ''}" 
+           data-conv-id="${escapeHtml(dmId)}" 
+           data-conv-type="DIRECT"
+           onclick="selectChatConversation('${escapeHtml(dmId)}', 'DIRECT', '${escapeHtml(pName)}')">
+        <span class="status-dot-tiny"></span>
+        <span>👤</span>
+        <span>${escapeHtml(pName)}</span>
+      </div>
+    `;
+  });
+
+  chipsContainer.innerHTML = html;
+
+  if (selectedConvId) {
+    const grp = groups.find((g) => g.id === selectedConvId);
+    if (grp) {
+      selectChatConversation(grp.id, 'GROUP', grp.name, false);
+      return;
+    }
+    const peer = validPeers.find((p) => getDirectChatId(myDeviceId, p.deviceId) === selectedConvId);
+    if (peer) {
+      selectChatConversation(selectedConvId, 'DIRECT', peer.name || 'Nearby Friend', false);
+      return;
+    }
+  }
+}
+window.renderChatConversationChips = renderChatConversationChips;
+
+function selectChatConversation(convId, convType, title, shouldRerenderChips = true) {
+  state.activeChatConversationId = convId;
+  state.activeChatConversationType = convType;
+  state.activeChatPeerName = title;
+
+  const titleEl = document.getElementById('main-chat-header-title');
+  const avatarEl = document.getElementById('main-chat-header-avatar');
+  const statusEl = document.getElementById('main-chat-header-status');
+  const ledgerBtn = document.getElementById('btn-chat-view-group-ledger');
+
+  if (titleEl) titleEl.textContent = title;
+  if (avatarEl) {
+    avatarEl.textContent = convType === 'GROUP' ? '👥' : (title ? title.replace(/^Android User /i, '')[0].toUpperCase() : '👤');
+  }
+  if (statusEl) {
+    if (convType === 'GROUP') {
+      const g = (state.groups || []).find((grp) => grp.id === convId);
+      const count = g && g.members ? g.members.length : 0;
+      statusEl.innerHTML = `<span>👥 Group Chat • ${count} members</span>`;
+    } else {
+      statusEl.innerHTML = `<span class="status-dot-tiny"></span> <span>Direct P2P Offline Chat</span>`;
+    }
+  }
+
+  if (ledgerBtn) {
+    if (convType === 'GROUP') {
+      ledgerBtn.style.display = 'inline-flex';
+      ledgerBtn.onclick = () => openGroupDetail(convId);
+    } else {
+      ledgerBtn.style.display = 'none';
+    }
+  }
+
+  document.querySelectorAll('#chat-conversation-chips .chat-conv-chip').forEach((chip) => {
+    if (chip.getAttribute('data-conv-id') === convId) {
+      chip.classList.add('active');
+      chip.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    } else {
+      chip.classList.remove('active');
+    }
+  });
+
+  loadMessages(convId);
+}
+window.selectChatConversation = selectChatConversation;
+
+function startDirectChatWithPeer(peerDeviceId, peerName) {
+  const myDeviceId = (state.info && state.info.deviceId) || 'me';
+  const dmId = getDirectChatId(myDeviceId, peerDeviceId);
+  switchView('view-chat');
+  initChatView(dmId);
+}
+window.startDirectChatWithPeer = startDirectChatWithPeer;
+
+// Chat Messages Logic
+async function loadMessages(conversationId) {
+  const targetId = conversationId || state.activeChatConversationId || state.activeGroupId;
+  if (!targetId) return;
+
+  const messages = await fetchApi(`/api/groups/${targetId}/messages`);
+  renderMessages(messages || [], 'main-chat-messages');
+  renderMessages(messages || [], 'chat-messages-container');
 }
 
-function renderMessages(messages) {
-  const container = document.getElementById('chat-messages-container');
+function renderMessages(messages, containerId = 'main-chat-messages') {
+  const container = document.getElementById(containerId);
   if (!container) return;
 
   if (!messages || messages.length === 0) {
+    const isDirect = state.activeChatConversationType === 'DIRECT';
+    const peerName = state.activeChatPeerName || 'friend';
     container.innerHTML = `
       <div class="chat-empty-hint">
-        💬 No messages in this group yet.<br>Say hi! Messages sync automatically offline.
+        ${isDirect 
+          ? `💬 Say hi to ${escapeHtml(peerName)}!<br>Messages sync peer-to-peer offline over Wi-Fi & Quick Share.` 
+          : '💬 No messages in this conversation yet.<br>Say hi! Messages sync peer-to-peer offline.'}
       </div>
     `;
     return;
@@ -2133,6 +2341,23 @@ function renderMessages(messages) {
   container.scrollTop = container.scrollHeight;
 }
 
+// Dedicated Main Chat Send
+safeOn(document.getElementById('form-main-chat-send'), 'submit', async (e) => {
+  e.preventDefault();
+  const input = document.getElementById('input-main-chat-text');
+  if (!input || !state.activeChatConversationId) return;
+  const text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  await fetchApi(`/api/groups/${state.activeChatConversationId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ text }),
+  });
+  await loadMessages(state.activeChatConversationId);
+});
+
+// Group Detail Chat Tab Send
 safeOn(document.getElementById('form-chat-send'), 'submit', async (e) => {
   e.preventDefault();
   const input = document.getElementById('input-chat-text');
@@ -2212,11 +2437,11 @@ safeOn(document.getElementById('btn-sheet-info'), 'click', () => {
   if (currentActionGroupId) openGroupInfo(currentActionGroupId);
 });
 
-safeOn(document.getElementById('btn-sheet-chat'), 'click', async () => {
+safeOn(document.getElementById('btn-sheet-chat'), 'click', () => {
   closeModal('modal-group-actions');
   if (currentActionGroupId) {
-    await openGroupDetail(currentActionGroupId);
-    switchDetailTab('chat');
+    switchView('view-chat');
+    initChatView(currentActionGroupId);
   }
 });
 

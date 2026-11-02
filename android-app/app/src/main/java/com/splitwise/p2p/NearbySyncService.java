@@ -260,6 +260,18 @@ public class NearbySyncService {
     public void broadcastSync() {
         for (String endpointId : connectedEndpoints.keySet()) {
             sendHello(endpointId);
+            String peerDevId = endpointToDeviceId.get(endpointId);
+            if (peerDevId != null && !peerDevId.isEmpty()) {
+                try {
+                    String dmChatId = DatabaseHelper.getDirectChatId(deviceId, peerDevId);
+                    JSONObject dmHeader = new JSONObject();
+                    dmHeader.put("type", "SYNC_DATA_HEADER");
+                    dmHeader.put("deviceId", deviceId);
+                    dmHeader.put("groupId", dmChatId);
+                    dmHeader.put("messages", db.listMessages(dmChatId));
+                    sendPayload(endpointId, dmHeader);
+                } catch (Exception ignored) {}
+            }
         }
     }
 
@@ -343,6 +355,17 @@ public class NearbySyncService {
                     shared.add(gid);
                 }
             }
+
+            // Sync direct 1-on-1 messages with this peer regardless of group membership
+            try {
+                String dmChatId = DatabaseHelper.getDirectChatId(deviceId, remoteDeviceId);
+                JSONObject dmHeader = new JSONObject();
+                dmHeader.put("type", "SYNC_DATA_HEADER");
+                dmHeader.put("deviceId", deviceId);
+                dmHeader.put("groupId", dmChatId);
+                dmHeader.put("messages", db.listMessages(dmChatId));
+                sendPayload(endpointId, dmHeader);
+            } catch (Exception ignored) {}
 
             if (shared.isEmpty()) return;
 

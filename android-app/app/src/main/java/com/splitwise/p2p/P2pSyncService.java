@@ -232,6 +232,20 @@ public class P2pSyncService {
                 sendHello(writer);
             }
 
+            // Sync direct 1-on-1 messages with this peer regardless of group membership
+            try {
+                String dmChatId = DatabaseHelper.getDirectChatId(deviceId, remoteDeviceId);
+                JSONObject dmPayload = new JSONObject();
+                dmPayload.put("type", "SYNC_DATA");
+                dmPayload.put("deviceId", deviceId);
+                JSONObject groupsObj = new JSONObject();
+                JSONObject dmData = new JSONObject();
+                dmData.put("messages", db.listMessages(dmChatId));
+                groupsObj.put(dmChatId, dmData);
+                dmPayload.put("groups", groupsObj);
+                writer.println(dmPayload.toString());
+            } catch (Exception ignored) {}
+
             if (shared.isEmpty()) return;
 
             // Push our data for shared groups immediately

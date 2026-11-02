@@ -150,8 +150,15 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         return name;
     }
 
+    public static String getDirectChatId(String dev1, String dev2) {
+        if (dev1 == null) dev1 = "";
+        if (dev2 == null) dev2 = "";
+        return dev1.compareTo(dev2) < 0 ? "dm_" + dev1 + "_" + dev2 : "dm_" + dev2 + "_" + dev1;
+    }
+
     public String getGroupName(String groupId) {
         if (groupId == null) return "Unknown Group";
+        if (groupId.startsWith("dm_")) return "Direct Chat";
         SQLiteDatabase db = getReadableDatabase();
         Cursor c = db.rawQuery("SELECT name FROM groups WHERE id = ?", new String[]{groupId});
         String name = "Unknown Group";

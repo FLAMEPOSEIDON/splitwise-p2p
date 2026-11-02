@@ -475,6 +475,46 @@ class WebServer {
       return;
     }
 
+    // GET /api/groups/:id/messages
+    const messagesMatch = pathname.match(/^\/api\/groups\/([a-zA-Z0-9_-]+)\/messages$/);
+    if (messagesMatch && req.method === 'GET') {
+      const convId = messagesMatch[1];
+      const msgs = expenses.listMessages(convId);
+      sendJson(200, msgs);
+      return;
+    }
+
+    // POST /api/groups/:id/messages
+    if (messagesMatch && req.method === 'POST') {
+      const convId = messagesMatch[1];
+      parseBody((err, body) => {
+        if (err || !body.text) {
+          sendJson(400, { error: 'Message text required' });
+          return;
+        }
+        const senderName = body.senderName || this.deviceName;
+        const msg = expenses.addMessage(convId, this.deviceId, senderName, body.text, this.hlcClock);
+        this.broadcastUpdate('CHAT_MESSAGE', { groupId: convId, message: msg });
+        sendJson(201, msg);
+      });
+      return;
+    }
+
+    // GET /api/invites
+    if (pathname === '/api/invites' && req.method === 'GET') {
+      sendJson(200, expenses.listPendingInvites());
+      return;
+    }
+
+    // POST /api/invites/dismiss
+    if (pathname === '/api/invites/dismiss' && req.method === 'POST') {
+      parseBody((err, body) => {
+        if (body && body.groupId) expenses.dismissInvite(body.groupId);
+        sendJson(200, { success: true });
+      });
+      return;
+    }
+
     // GET /api/peers
     if (pathname === '/api/peers' && req.method === 'GET') {
       const peers = this.discovery ? this.discovery.getPeers() : [];

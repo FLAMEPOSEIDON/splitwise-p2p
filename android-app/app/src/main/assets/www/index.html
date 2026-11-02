@@ -129,6 +129,69 @@
       </div>
     </div>
 
+    <!-- VIEW: Dedicated Chat (Groups & Direct Nearby Peer Chat) -->
+    <div id="view-chat" style="display: none;">
+      <!-- Active Conversation Header Bar -->
+      <div class="chat-header-bar">
+        <div class="chat-header-info">
+          <div class="chat-header-avatar" id="main-chat-header-avatar">💬</div>
+          <div style="min-width: 0;">
+            <h2 class="chat-header-title" id="main-chat-header-title">Select a Conversation</h2>
+            <div class="chat-header-status" id="main-chat-header-status">Offline P2P Mesh Chat</div>
+          </div>
+        </div>
+        <div class="chat-header-actions">
+          <button class="btn btn-secondary btn-sm" id="btn-chat-view-group-ledger" style="display: none;" title="Open Group Ledger">
+            📊 Ledger
+          </button>
+          <button class="btn btn-secondary btn-sm" id="btn-chat-scan-nearby" onclick="switchView('view-network')" title="Scan Nearby Friends">
+            📡 Scan
+          </button>
+        </div>
+      </div>
+
+      <!-- Top Conversation Switcher Bar (Horizontal Chips for Groups + Nearby Friends) -->
+      <div class="chat-conversation-picker-section">
+        <div class="chat-picker-label-row">
+          <span class="chat-picker-label">Conversations</span>
+          <span class="chat-picker-count" id="chat-picker-count">0 available</span>
+        </div>
+        <div class="filter-scroll" id="chat-conversation-chips">
+          <!-- Dynamically populated: groups + nearby discovered peers -->
+        </div>
+      </div>
+
+      <!-- Empty State if no conversations exist -->
+      <div id="main-chat-empty-conversations" style="display: none;">
+        <div class="empty-state" style="padding: 30px 16px;">
+          <div class="empty-state-icon">💬</div>
+          <h3>No Conversations Yet</h3>
+          <p>Create a group with your friends or discover nearby users running Splitwise P2P to chat directly offline!</p>
+          <div style="display: flex; gap: 10px; justify-content: center; margin-top: 14px; flex-wrap: wrap;">
+            <button class="btn btn-primary btn-sm" onclick="openModal('modal-create-group')">+ Create Group</button>
+            <button class="btn btn-secondary btn-sm" onclick="switchView('view-network')">📡 Discover Nearby Friends</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main Chat Messages & Sticky Input Wrapper -->
+      <div class="main-chat-wrapper" id="main-chat-wrapper">
+        <div class="chat-messages-container" id="main-chat-messages">
+          <div class="chat-empty-hint" id="main-chat-empty-hint">
+            💬 Select a conversation above to start chatting! Messages sync peer-to-peer offline.
+          </div>
+        </div>
+        <form class="chat-input-bar" id="form-main-chat-send">
+          <input type="text" class="chat-input" id="input-main-chat-text" placeholder="Type a message..." required autocomplete="off">
+          <button type="submit" class="btn-chat-send" id="btn-main-chat-send" title="Send message">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+            </svg>
+          </button>
+        </form>
+      </div>
+    </div>
+
     <!-- VIEW 2: Group Detail -->
     <div id="view-group-detail" style="display: none;">
       <div class="back-bar" id="btn-back-to-groups" onclick="switchView('view-groups')">
@@ -424,6 +487,16 @@
         </svg>
       </div>
       <div class="nav-label">Groups</div>
+    </div>
+
+    <div class="nav-item" data-view="view-chat">
+      <div class="nav-icon" style="position: relative;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+        </svg>
+        <span class="nav-badge" id="chat-nav-badge" style="display: none;"></span>
+      </div>
+      <div class="nav-label">Chat</div>
     </div>
 
     <div class="nav-item" data-view="view-activity">
