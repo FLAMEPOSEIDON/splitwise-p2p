@@ -67,6 +67,28 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 "raw_amount REAL, " +
                 "timestamp TEXT NOT NULL, " +
                 "date TEXT);");
+
+        ensureChatAndInviteTables(db);
+    }
+
+    public void ensureChatAndInviteTables(SQLiteDatabase db) {
+        try {
+            db.execSQL("CREATE TABLE IF NOT EXISTS messages (" +
+                    "id TEXT PRIMARY KEY, " +
+                    "group_id TEXT NOT NULL, " +
+                    "sender_device_id TEXT NOT NULL, " +
+                    "sender_name TEXT NOT NULL, " +
+                    "text TEXT NOT NULL, " +
+                    "timestamp TEXT NOT NULL, " +
+                    "hlc TEXT NOT NULL);");
+            db.execSQL("CREATE TABLE IF NOT EXISTS group_invites (" +
+                    "group_id TEXT PRIMARY KEY, " +
+                    "group_name TEXT NOT NULL, " +
+                    "inviter_name TEXT NOT NULL, " +
+                    "inviter_device_id TEXT NOT NULL, " +
+                    "received_at TEXT NOT NULL, " +
+                    "status TEXT DEFAULT 'PENDING');");
+        } catch (Exception ignored) {}
     }
 
     @Override
@@ -78,6 +100,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE expenses ADD COLUMN date TEXT;");
         } catch (Exception ignored) {}
         ensureActivityTable(db);
+        ensureChatAndInviteTables(db);
     }
 
     public void ensureActivityTable(SQLiteDatabase db) {
@@ -206,6 +229,22 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         }
     }
 
+    public JSONObject createGroupWithMembers(String name, String deviceId, String memberName, JSONArray initialMembers) {
+        JSONObject obj = createGroup(name, deviceId, memberName);
+        if (initialMembers != null) {
+            String groupId = obj.optString("id");
+            for (int i = 0; i < initialMembers.length(); i++) {
+                try {
+                    JSONObject m = initialMembers.getJSONObject(i);
+                    String mName = m.getString("name");
+                    String mDevId = m.optString("deviceId", null);
+                    addMember(groupId, mName, mDevId);
+                } catch (Exception ignored) {}
+            }
+        }
+        return obj;
+    }
+
     public void addMember(String groupId, String name, String deviceId) {
         upsertMember(UUID.randomUUID().toString(), groupId, name, deviceId, nowIso());
     }
@@ -331,6 +370,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         db.delete("members", "group_id = ?", new String[]{groupId});
         db.delete("sync_state", "group_id = ?", new String[]{groupId});
         db.delete("activity_log", "group_id = ?", new String[]{groupId});
+        try { db.delete("messages", "group_id = ?", new String[]{groupId}); } catch (Exception ignored) {}
+        try { db.delete("group_invites", "group_id = ?", new String[]{groupId}); } catch (Exception ignored) {}
         db.delete("groups", "id = ?", new String[]{groupId});
         logActivity("", "GROUP_DELETED", "🗑️", "Group deleted", "\"" + groupName + "\" and all its data were deleted", null, 0, nowIso(), todayDate());
     }
@@ -1204,5 +1245,141 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         }
 
         return activities;
+    }
+
+    // --- Chat Messages & Group Invites ---
+
+    public JSONObject addMessage(HlcClock clock, String groupId, String senderDeviceId, String senderName, String text) {
+        SQLiteDatabase db = getWritableDatabase();
+        ensureChatAndInviteTables(db);
+        String id = UUID.randomUUID().toString();
+        String hlc = clock.tick();
+        String ts = nowIso();
+
+        ContentValues cv = new ContentValues();
+        cv.put("id", id);
+        cv.put("group_id", groupId);
+        cv.put("sender_device_id", senderDeviceId);
+        cv.put("sender_name", senderName);
+        cv.put("text", text);
+        cv.put("timestamp", ts);
+        cv.put("hlc", hlc);
+        db.insert("messages", null, cv);
+
+        String preview = text.length() > 30 ? text.substring(0, 30) + "..." : text;
+        logActivity(groupId, "CHAT_MESSAGE", "💬", senderName + ": \"" + preview + "\"", "in " + getGroupName(groupId), null, 0, ts, todayDate());
+
+        try {
+            JSONObject obj = new JSONObject();
+            obj.put("id", id);
+            obj.put("group_id", groupId);
+            obj.put("sender_device_id", senderDeviceId);
+            obj.put("sender_name", senderName);
+            obj.put("text", text);
+            obj.put("timestamp", ts);
+            obj.put("hlc", hlc);
+            return obj;
+        } catch (Exception e) {
+            return new JSONObject();
+        }
+    }
+
+    public JSONArray listMessages(String groupId) {
+        SQLiteDatabase db = getReadableDatabase();
+        ensureChatAndInviteTables(db);
+        JSONArray arr = new JSONArray();
+        Cursor c = db.rawQuery("SELECT * FROM messages WHERE group_id = ? ORDER BY timestamp ASC", new String[]{groupId});
+        try {
+            while (c.moveToNext()) {
+                JSONObject m = new JSONObject();
+                m.put("id", c.getString(c.getColumnIndexOrThrow("id")));
+                m.put("group_id", c.getString(c.getColumnIndexOrThrow("group_id")));
+                m.put("sender_device_id", c.getString(c.getColumnIndexOrThrow("sender_device_id")));
+                m.put("sender_name", c.getString(c.getColumnIndexOrThrow("sender_name")));
+                m.put("text", c.getString(c.getColumnIndexOrThrow("text")));
+                m.put("timestamp", c.getString(c.getColumnIndexOrThrow("timestamp")));
+                m.put("hlc", c.getString(c.getColumnIndexOrThrow("hlc")));
+                arr.put(m);
+            }
+        } catch (Exception ignored) {
+        } finally {
+            c.close();
+        }
+        return arr;
+    }
+
+    public int mergeMessagesBatch(HlcClock clock, String groupId, JSONArray messagesArr) {
+        if (messagesArr == null || messagesArr.length() == 0) return 0;
+        SQLiteDatabase db = getWritableDatabase();
+        ensureChatAndInviteTables(db);
+        int merged = 0;
+        for (int i = 0; i < messagesArr.length(); i++) {
+            try {
+                JSONObject m = messagesArr.getJSONObject(i);
+                String id = m.getString("id");
+                String hlc = m.getString("hlc");
+
+                clock.update(hlc);
+
+                Cursor c = db.rawQuery("SELECT id FROM messages WHERE id = ?", new String[]{id});
+                boolean exists = c.moveToFirst();
+                c.close();
+
+                if (!exists) {
+                    ContentValues cv = new ContentValues();
+                    cv.put("id", id);
+                    cv.put("group_id", groupId);
+                    cv.put("sender_device_id", m.getString("sender_device_id"));
+                    cv.put("sender_name", m.getString("sender_name"));
+                    cv.put("text", m.getString("text"));
+                    cv.put("timestamp", m.optString("timestamp", nowIso()));
+                    cv.put("hlc", hlc);
+                    db.insert("messages", null, cv);
+                    merged++;
+                }
+            } catch (Exception ignored) {}
+        }
+        return merged;
+    }
+
+    public void addPendingInvite(String groupId, String groupName, String inviterName, String inviterDeviceId) {
+        SQLiteDatabase db = getWritableDatabase();
+        ensureChatAndInviteTables(db);
+        ContentValues cv = new ContentValues();
+        cv.put("group_id", groupId);
+        cv.put("group_name", groupName);
+        cv.put("inviter_name", inviterName);
+        cv.put("inviter_device_id", inviterDeviceId);
+        cv.put("received_at", nowIso());
+        cv.put("status", "PENDING");
+        db.insertWithOnConflict("group_invites", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    public JSONArray listPendingInvites() {
+        SQLiteDatabase db = getReadableDatabase();
+        ensureChatAndInviteTables(db);
+        JSONArray arr = new JSONArray();
+        Cursor c = db.rawQuery("SELECT * FROM group_invites WHERE status = 'PENDING' ORDER BY received_at DESC", null);
+        try {
+            while (c.moveToNext()) {
+                JSONObject inv = new JSONObject();
+                inv.put("groupId", c.getString(c.getColumnIndexOrThrow("group_id")));
+                inv.put("groupName", c.getString(c.getColumnIndexOrThrow("group_name")));
+                inv.put("inviterName", c.getString(c.getColumnIndexOrThrow("inviter_name")));
+                inv.put("inviterDeviceId", c.getString(c.getColumnIndexOrThrow("inviter_device_id")));
+                inv.put("receivedAt", c.getString(c.getColumnIndexOrThrow("received_at")));
+                arr.put(inv);
+            }
+        } catch (Exception ignored) {
+        } finally {
+            c.close();
+        }
+        return arr;
+    }
+
+    public void dismissInvite(String groupId) {
+        SQLiteDatabase db = getWritableDatabase();
+        ensureChatAndInviteTables(db);
+        db.delete("group_invites", "group_id = ?", new String[]{groupId});
     }
 }

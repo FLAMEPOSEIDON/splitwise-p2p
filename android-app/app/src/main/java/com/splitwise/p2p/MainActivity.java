@@ -121,6 +121,11 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
 
         // 5. Configure Fullscreen Web View
         webView = new WebView(this);
+        webView.setBackgroundColor(0xFF0F172A);
+        webView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null);
+        webView.setOverScrollMode(android.view.View.OVER_SCROLL_NEVER);
+        webView.setVerticalScrollBarEnabled(false);
+        webView.setHorizontalScrollBarEnabled(false);
         setContentView(webView);
 
         WebSettings settings = webView.getSettings();
@@ -492,6 +497,20 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         }
 
         @JavascriptInterface
+        public String createGroupWithMembers(String name, String userName, String initialMembersJson) {
+            try {
+                JSONArray initialMembers = (initialMembersJson != null && !initialMembersJson.trim().isEmpty())
+                        ? new JSONArray(initialMembersJson) : new JSONArray();
+                JSONObject g = dbHelper.createGroupWithMembers(name, deviceId, userName, initialMembers);
+                if (syncService != null) syncService.broadcastSync();
+                if (nearbySyncService != null) nearbySyncService.broadcastSync();
+                return g.toString();
+            } catch (Exception e) {
+                return createGroup(name, userName);
+            }
+        }
+
+        @JavascriptInterface
         public String joinGroup(String groupId, String userName) {
             dbHelper.joinGroupStub(groupId, deviceId, userName);
             if (syncService != null) syncService.broadcastSync();
@@ -578,6 +597,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                     obj.put("name", p.name);
                     obj.put("host", p.host);
                     obj.put("port", p.port);
+                    obj.put("deviceId", p.deviceId != null ? p.deviceId : "");
                     obj.put("type", "Local Wi-Fi Mesh");
                     arr.put(obj);
                 } catch (Exception ignored) {}
@@ -588,6 +608,43 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                 }
             }
             return arr.toString();
+        }
+
+        @JavascriptInterface
+        public String getMessages(String groupId) {
+            return dbHelper.listMessages(groupId).toString();
+        }
+
+        @JavascriptInterface
+        public String sendMessage(String groupId, String text) {
+            try {
+                JSONObject msg = dbHelper.addMessage(hlcClock, groupId, deviceId, deviceName, text);
+                if (syncService != null) syncService.broadcastSync();
+                if (nearbySyncService != null) nearbySyncService.broadcastSync();
+                return msg.toString();
+            } catch (Exception e) {
+                return "{}";
+            }
+        }
+
+        @JavascriptInterface
+        public String getPendingInvites() {
+            return dbHelper.listPendingInvites().toString();
+        }
+
+        @JavascriptInterface
+        public void dismissInvite(String groupId) {
+            dbHelper.dismissInvite(groupId);
+        }
+
+        @JavascriptInterface
+        public void sendGroupInvite(String groupId, String groupName, String targetDeviceId) {
+            if (syncService != null) {
+                syncService.sendGroupInvite(groupId, groupName, targetDeviceId);
+            }
+            if (nearbySyncService != null) {
+                nearbySyncService.sendGroupInvite(groupId, groupName, targetDeviceId);
+            }
         }
 
         @JavascriptInterface

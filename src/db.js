@@ -101,4 +101,27 @@ db.exec(`
   );
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    group_id TEXT NOT NULL,
+    sender_device_id TEXT NOT NULL,
+    sender_name TEXT NOT NULL,
+    text TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    hlc TEXT NOT NULL
+  );
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS group_invites (
+    group_id TEXT PRIMARY KEY,
+    group_name TEXT NOT NULL,
+    inviter_name TEXT NOT NULL,
+    inviter_device_id TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    status TEXT DEFAULT 'PENDING'
+  );
+`);
+
 module.exports = { db, DB_PATH };

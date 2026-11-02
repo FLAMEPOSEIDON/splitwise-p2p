@@ -18,7 +18,7 @@ const { db } = require('./db');
 /**
  * Create a new group. Returns the group object.
  */
-function createGroup(name, deviceId, memberName) {
+function createGroup(name, deviceId, memberName, initialMembers = []) {
   const groupId = randomUUID();
   const now = new Date().toISOString();
 
@@ -27,6 +27,14 @@ function createGroup(name, deviceId, memberName) {
   ).run(groupId, name, deviceId, now);
 
   addMember(groupId, memberName, deviceId);
+
+  if (Array.isArray(initialMembers)) {
+    for (const m of initialMembers) {
+      if (m && m.name) {
+        addMember(groupId, m.name, m.deviceId || null);
+      }
+    }
+  }
 
   return { id: groupId, name, created_by: deviceId, created_at: now };
 }
@@ -96,6 +104,8 @@ function deleteGroup(groupId) {
   db.prepare('DELETE FROM members WHERE group_id = ?').run(groupId);
   db.prepare('DELETE FROM sync_state WHERE group_id = ?').run(groupId);
   db.prepare('DELETE FROM activity_log WHERE group_id = ?').run(groupId);
+  try { db.prepare('DELETE FROM messages WHERE group_id = ?').run(groupId); } catch (_) {}
+  try { db.prepare('DELETE FROM group_invites WHERE group_id = ?').run(groupId); } catch (_) {}
   db.prepare('DELETE FROM groups WHERE id = ?').run(groupId);
   logActivity('', 'GROUP_DELETED', '🗑️', 'Group deleted', `"${gName}" and all its data were deleted`, null, 0, new Date().toISOString(), new Date().toISOString().split('T')[0]);
 }
@@ -810,6 +820,42 @@ function getActivityFeed(limit = 100, targetGroupId = null) {
   return activities.slice(0, limit);
 }
 
+function addMessage(groupId, senderDeviceId, senderName, text, hlcClock) {
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  const hlc = hlcClock ? hlcClock.tick() : `${Date.now()}-0-${senderDeviceId || 'local'}`;
+
+  db.prepare(
+    `INSERT INTO messages (id, group_id, sender_device_id, sender_name, text, timestamp, hlc)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, groupId, senderDeviceId, senderName, text, now, hlc);
+
+  const preview = text.length > 30 ? text.slice(0, 30) + '...' : text;
+  logActivity(groupId, 'CHAT_MESSAGE', '💬', `${senderName}: "${preview}"`, `in ${getGroupName(groupId)}`, null, 0, now, now.split('T')[0]);
+
+  return { id, group_id: groupId, sender_device_id: senderDeviceId, sender_name: senderName, text, timestamp: now, hlc };
+}
+
+function listMessages(groupId) {
+  return db.prepare(`SELECT * FROM messages WHERE group_id = ? ORDER BY timestamp ASC`).all(groupId);
+}
+
+function addPendingInvite(groupId, groupName, inviterName, inviterDeviceId) {
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT OR REPLACE INTO group_invites (group_id, group_name, inviter_name, inviter_device_id, received_at, status)
+     VALUES (?, ?, ?, ?, ?, 'PENDING')`
+  ).run(groupId, groupName, inviterName, inviterDeviceId, now);
+}
+
+function listPendingInvites() {
+  return db.prepare(`SELECT group_id as groupId, group_name as groupName, inviter_name as inviterName, inviter_device_id as inviterDeviceId, received_at as receivedAt FROM group_invites WHERE status = 'PENDING' ORDER BY received_at DESC`).all();
+}
+
+function dismissInvite(groupId) {
+  db.prepare(`DELETE FROM group_invites WHERE group_id = ?`).run(groupId);
+}
+
 module.exports = {
   createGroup,
   deleteGroup,
@@ -830,4 +876,9 @@ module.exports = {
   importSplitwiseCsv,
   exportSplitwiseCsv,
   getActivityFeed,
+  addMessage,
+  listMessages,
+  addPendingInvite,
+  listPendingInvites,
+  dismissInvite,
 };

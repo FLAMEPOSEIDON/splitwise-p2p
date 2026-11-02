@@ -61,6 +61,7 @@ public class NearbySyncService {
 
     private final Map<String, String> discoveredEndpoints = new ConcurrentHashMap<>();
     private final Map<String, String> connectedEndpoints = new ConcurrentHashMap<>();
+    private final Map<String, String> endpointToDeviceId = new ConcurrentHashMap<>();
     private final Set<String> pendingConnections = Collections.synchronizedSet(new HashSet<>());
 
     private volatile boolean isRunning = false;
@@ -116,6 +117,7 @@ public class NearbySyncService {
                 JSONObject obj = new JSONObject();
                 obj.put("id", entry.getKey());
                 obj.put("name", entry.getValue());
+                obj.put("deviceId", endpointToDeviceId.getOrDefault(entry.getKey(), ""));
                 obj.put("type", "Quick Share (BLE/Wi-Fi Direct)");
                 obj.put("connected", true);
                 peers.add(obj);
@@ -127,6 +129,7 @@ public class NearbySyncService {
                     JSONObject obj = new JSONObject();
                     obj.put("id", entry.getKey());
                     obj.put("name", entry.getValue());
+                    obj.put("deviceId", endpointToDeviceId.getOrDefault(entry.getKey(), ""));
                     obj.put("type", "Quick Share (Nearby)");
                     obj.put("connected", false);
                     peers.add(obj);
@@ -173,6 +176,8 @@ public class NearbySyncService {
             }
 
             String cleanName = remoteName != null && remoteName.contains("#") ? remoteName.split("#")[0] : remoteName;
+            String devId = (remoteName != null && remoteName.contains("#")) ? remoteName.split("#")[1] : "";
+            if (!devId.isEmpty()) endpointToDeviceId.put(endpointId, devId);
             discoveredEndpoints.put(endpointId, cleanName);
             mainHandler.post(() -> listener.onPeerFound(endpointId, cleanName));
 
@@ -203,6 +208,8 @@ public class NearbySyncService {
         public void onConnectionInitiated(String endpointId, ConnectionInfo connectionInfo) {
             String remoteName = connectionInfo.getEndpointName();
             String cleanName = remoteName != null && remoteName.contains("#") ? remoteName.split("#")[0] : remoteName;
+            String devId = (remoteName != null && remoteName.contains("#")) ? remoteName.split("#")[1] : "";
+            if (!devId.isEmpty()) endpointToDeviceId.put(endpointId, devId);
             discoveredEndpoints.put(endpointId, cleanName);
 
             Log.d(TAG, "Nearby connection initiated with " + cleanName + " (" + endpointId + "). Auto-accepting...");
@@ -300,6 +307,8 @@ public class NearbySyncService {
                 handleSyncHeader(msg);
             } else if ("SYNC_DATA_CHUNK".equals(type)) {
                 handleSyncChunk(msg);
+            } else if ("GROUP_INVITE".equals(type)) {
+                handleGroupInvite(msg);
             }
         } catch (Exception e) {
             Log.e(TAG, "Error parsing nearby message", e);
@@ -309,6 +318,7 @@ public class NearbySyncService {
     private void handleHello(String endpointId, JSONObject msg) {
         try {
             String remoteDeviceId = msg.getString("deviceId");
+            endpointToDeviceId.put(endpointId, remoteDeviceId);
             if (remoteDeviceId.equals(deviceId)) return;
 
             String remoteName = msg.optString("deviceName", null);
@@ -368,6 +378,7 @@ public class NearbySyncService {
                 header.put("groupId", gid);
                 header.put("info", db.getGroup(gid));
                 header.put("members", db.listMembers(gid));
+                header.put("messages", db.listMessages(gid));
                 sendPayload(endpointId, header);
 
                 JSONArray allExpenses = db.listExpenses(gid, true);
@@ -411,6 +422,7 @@ public class NearbySyncService {
                 header.put("groupId", gid);
                 header.put("info", db.getGroup(gid));
                 header.put("members", db.listMembers(gid));
+                header.put("messages", db.listMessages(gid));
                 sendPayload(endpointId, header);
 
                 JSONArray allExpenses = db.listExpenses(gid, true);
@@ -441,6 +453,10 @@ public class NearbySyncService {
                     JSONObject m = members.getJSONObject(i);
                     db.upsertMember(m.optString("id", null), gid, m.getString("name"), m.getString("device_id"), m.optString("joined_at", null));
                 }
+            }
+            JSONArray messages = msg.optJSONArray("messages");
+            if (messages != null && messages.length() > 0) {
+                db.mergeMessagesBatch(hlcClock, gid, messages);
             }
             mainHandler.post(() -> listener.onDataMerged(1));
         } catch (Exception e) {
@@ -492,6 +508,11 @@ public class NearbySyncService {
                     totalMerged += db.mergeExpensesBatch(hlcClock, gid, expenses);
                 }
 
+                JSONArray messages = gData.optJSONArray("messages");
+                if (messages != null && messages.length() > 0) {
+                    totalMerged += db.mergeMessagesBatch(hlcClock, gid, messages);
+                }
+
                 db.updateCheckpoint(gid, remoteDeviceId, hlcClock.tick());
             }
 
@@ -499,6 +520,40 @@ public class NearbySyncService {
             mainHandler.post(() -> listener.onDataMerged(count));
         } catch (Exception e) {
             Log.e(TAG, "Error handling SYNC_DATA", e);
+        }
+    }
+
+    private void handleGroupInvite(JSONObject msg) {
+        try {
+            String targetDeviceId = msg.optString("targetDeviceId", "");
+            if (!targetDeviceId.isEmpty() && !targetDeviceId.equals(deviceId)) {
+                return;
+            }
+            String gid = msg.getString("groupId");
+            String gName = msg.getString("groupName");
+            String invName = msg.getString("inviterName");
+            String invDevId = msg.getString("inviterDeviceId");
+            db.addPendingInvite(gid, gName, invName, invDevId);
+            mainHandler.post(() -> listener.onDataMerged(1));
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling GROUP_INVITE", e);
+        }
+    }
+
+    public void sendGroupInvite(String groupId, String groupName, String targetDeviceId) {
+        try {
+            JSONObject inv = new JSONObject();
+            inv.put("type", "GROUP_INVITE");
+            inv.put("groupId", groupId);
+            inv.put("groupName", groupName);
+            inv.put("inviterName", deviceName);
+            inv.put("inviterDeviceId", deviceId);
+            inv.put("targetDeviceId", targetDeviceId != null ? targetDeviceId : "");
+            for (String endpointId : connectedEndpoints.keySet()) {
+                sendPayload(endpointId, inv);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error sending group invite", e);
         }
     }
 }

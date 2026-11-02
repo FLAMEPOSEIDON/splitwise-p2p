@@ -166,6 +166,8 @@ public class P2pSyncService {
                         handleSyncRequest(writer, msg);
                     } else if ("SYNC_DATA".equals(type)) {
                         handleSyncData(msg);
+                    } else if ("GROUP_INVITE".equals(type)) {
+                        handleGroupInvite(msg);
                     }
                 } catch (Exception ignored) {}
             }
@@ -203,8 +205,11 @@ public class P2pSyncService {
             String remoteName = msg.optString("deviceName", null);
             if (remoteName != null && !remoteName.trim().isEmpty()) {
                 db.updateMemberNameForDevice(remoteDeviceId, remoteName.trim());
-                for (PeerInfo p : discoveredPeers.values()) {
-                    if (p.deviceId != null && p.deviceId.equals(remoteDeviceId)) {
+            }
+            for (PeerInfo p : discoveredPeers.values()) {
+                if (p.deviceId == null || p.deviceId.equals(remoteDeviceId) || (p.name != null && p.name.contains(remoteDeviceId))) {
+                    p.deviceId = remoteDeviceId;
+                    if (remoteName != null && !remoteName.trim().isEmpty()) {
                         p.name = remoteName.trim();
                     }
                 }
@@ -262,6 +267,7 @@ public class P2pSyncService {
                 gData.put("info", db.getGroup(gid));
                 gData.put("members", db.listMembers(gid));
                 gData.put("expenses", db.listExpenses(gid, true));
+                gData.put("messages", db.listMessages(gid));
                 groupsObj.put(gid, gData);
             }
             payload.put("groups", groupsObj);
@@ -296,6 +302,7 @@ public class P2pSyncService {
                     }
                 }
                 gData.put("expenses", filtered);
+                gData.put("messages", db.listMessages(gid));
                 groupsObj.put(gid, gData);
             }
             payload.put("groups", groupsObj);
@@ -330,12 +337,54 @@ public class P2pSyncService {
                     totalMerged += db.mergeExpensesBatch(hlcClock, gid, expenses);
                 }
 
+                JSONArray messages = gData.optJSONArray("messages");
+                if (messages != null && messages.length() > 0) {
+                    totalMerged += db.mergeMessagesBatch(hlcClock, gid, messages);
+                }
+
                 db.updateCheckpoint(gid, remoteDeviceId, hlcClock.tick());
             }
 
             final int count = totalMerged;
             mainHandler.post(() -> listener.onDataMerged(count));
         } catch (Exception ignored) {}
+    }
+
+    private void handleGroupInvite(JSONObject msg) {
+        try {
+            String targetDeviceId = msg.optString("targetDeviceId", "");
+            if (!targetDeviceId.isEmpty() && !targetDeviceId.equals(deviceId)) {
+                return;
+            }
+            String gid = msg.getString("groupId");
+            String gName = msg.getString("groupName");
+            String invName = msg.getString("inviterName");
+            String invDevId = msg.getString("inviterDeviceId");
+            db.addPendingInvite(gid, gName, invName, invDevId);
+            mainHandler.post(() -> listener.onDataMerged(1));
+        } catch (Exception ignored) {}
+    }
+
+    public void sendGroupInvite(String groupId, String groupName, String targetDeviceId) {
+        threadPool.execute(() -> {
+            try {
+                JSONObject inv = new JSONObject();
+                inv.put("type", "GROUP_INVITE");
+                inv.put("groupId", groupId);
+                inv.put("groupName", groupName);
+                inv.put("inviterName", deviceName);
+                inv.put("inviterDeviceId", deviceId);
+                inv.put("targetDeviceId", targetDeviceId != null ? targetDeviceId : "");
+                String jsonStr = inv.toString();
+                synchronized (activeWriters) {
+                    for (PrintWriter w : activeWriters) {
+                        try {
+                            w.println(jsonStr);
+                        } catch (Exception ignored) {}
+                    }
+                }
+            } catch (Exception ignored) {}
+        });
     }
 
     // --- 2. Android Network Service Discovery (mDNS) ---

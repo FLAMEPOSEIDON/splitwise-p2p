@@ -137,6 +137,13 @@ const el = {
   tabContentExpenses: document.getElementById('tab-content-expenses'),
   tabContentBalances: document.getElementById('tab-content-balances'),
   tabContentMembers: document.getElementById('tab-content-members'),
+  tabContentChat: document.getElementById('tab-content-chat'),
+  chatMessagesContainer: document.getElementById('chat-messages-container'),
+  formChatSend: document.getElementById('form-chat-send'),
+  inputChatText: document.getElementById('input-chat-text'),
+  groupNearbyInviteList: document.getElementById('group-nearby-invite-list'),
+  pendingInvitesContainer: document.getElementById('pending-invites-container'),
+  createGroupNearbyList: document.getElementById('create-group-nearby-list'),
   expensesListContainer: document.getElementById('expenses-list-container'),
   settlementsListContainer: document.getElementById('settlements-list-container'),
   balancesListContainer: document.getElementById('balances-list-container'),
@@ -310,6 +317,9 @@ function safeOn(element, event, handler) {
 }
 
 function openModal(modalId) {
+  if (modalId === 'modal-create-group') {
+    populateCreateGroupNearbyPeers();
+  }
   const m = document.getElementById(modalId);
   if (m) {
     m.classList.add('open');
@@ -453,11 +463,36 @@ async function fetchApi(endpoint, options = {}) {
       }
       if (endpoint === '/api/groups' && options.method === 'POST') {
         const body = JSON.parse(options.body || '{}');
+        if (typeof window.AndroidBridge.createGroupWithMembers === 'function' && body.initialMembers && body.initialMembers.length > 0) {
+          return JSON.parse(window.AndroidBridge.createGroupWithMembers(body.name, body.yourName || 'Me', JSON.stringify(body.initialMembers)));
+        }
         return JSON.parse(window.AndroidBridge.createGroup(body.name, body.yourName || 'Me'));
       }
       if (endpoint === '/api/groups/join' && options.method === 'POST') {
         const body = JSON.parse(options.body || '{}');
         return JSON.parse(window.AndroidBridge.joinGroup(body.groupId, body.yourName || 'Me'));
+      }
+      const matchMessages = endpoint.match(/^\/api\/groups\/([a-zA-Z0-9_-]+)\/messages$/);
+      if (matchMessages && (!options.method || options.method === 'GET')) {
+        return JSON.parse(window.AndroidBridge.getMessages(matchMessages[1]) || '[]');
+      }
+      if (matchMessages && options.method === 'POST') {
+        const body = JSON.parse(options.body || '{}');
+        return JSON.parse(window.AndroidBridge.sendMessage(matchMessages[1], body.text || ''));
+      }
+      if (endpoint === '/api/invites' && (!options.method || options.method === 'GET')) {
+        return JSON.parse(window.AndroidBridge.getPendingInvites() || '[]');
+      }
+      if (endpoint === '/api/invites/dismiss' && options.method === 'POST') {
+        const body = JSON.parse(options.body || '{}');
+        window.AndroidBridge.dismissInvite(body.groupId);
+        return { success: true };
+      }
+      const matchInvite = endpoint.match(/^\/api\/groups\/([a-zA-Z0-9_-]+)\/invite$/);
+      if (matchInvite && options.method === 'POST') {
+        const body = JSON.parse(options.body || '{}');
+        window.AndroidBridge.sendGroupInvite(matchInvite[1], body.groupName || 'Group', body.targetDeviceId || '');
+        return { success: true };
       }
       const matchDetail = endpoint.match(/^\/api\/groups\/([a-zA-Z0-9_-]+)$/);
       if (matchDetail && (!options.method || options.method === 'GET')) {
@@ -767,6 +802,7 @@ function renderPeers(peers) {
 
 async function refreshData() {
   await loadInfo();
+  await loadPendingInvites();
   const groups = await fetchApi('/api/groups');
   if (groups) {
     state.groups = groups;
@@ -779,6 +815,141 @@ async function refreshData() {
       renderGroups();
     }
   }
+}
+
+let currentActionGroupId = null;
+
+function openGroupActions(groupId) {
+  currentActionGroupId = groupId;
+  const group = state.groups.find((g) => g.id === groupId);
+  if (!group) return;
+
+  const actionTitle = document.getElementById('action-sheet-title');
+  const actionSubtitle = document.getElementById('action-sheet-subtitle');
+  const actionAvatar = document.getElementById('action-sheet-avatar');
+
+  if (actionTitle) actionTitle.textContent = group.name;
+  if (actionSubtitle) actionSubtitle.textContent = `${group.members ? group.members.length : 0} members • ${group.expenseCount || 0} expenses`;
+  if (actionAvatar) actionAvatar.textContent = (group.name || 'G')[0].toUpperCase();
+
+  openModal('modal-group-actions');
+}
+
+window.openGroupActions = openGroupActions;
+
+function openGroupInfo(groupId) {
+  const group = state.groups.find((g) => g.id === groupId);
+  if (!group) return;
+
+  const infoAvatar = document.getElementById('info-modal-avatar');
+  const infoName = document.getElementById('info-modal-name');
+  const infoIdBadge = document.getElementById('info-modal-id-badge');
+  const infoMembersCount = document.getElementById('info-modal-members-count');
+  const infoExpensesCount = document.getElementById('info-modal-expenses-count');
+  const infoTotalSpend = document.getElementById('info-modal-total-spend');
+  const infoMembersList = document.getElementById('info-modal-members-list');
+
+  if (infoAvatar) infoAvatar.textContent = (group.name || 'G')[0].toUpperCase();
+  if (infoName) infoName.textContent = group.name;
+  if (infoIdBadge) {
+    infoIdBadge.textContent = `ID: ${group.id.slice(0, 8)}... (Tap to copy)`;
+    infoIdBadge.setAttribute('data-gid', group.id);
+  }
+  if (infoMembersCount) infoMembersCount.textContent = group.members ? group.members.length : 0;
+  if (infoExpensesCount) infoExpensesCount.textContent = group.expenseCount || 0;
+  if (infoTotalSpend) infoTotalSpend.textContent = formatMoney(group.totalSpend || 0);
+
+  if (infoMembersList && group.members) {
+    const myDevId = state.info && state.info.deviceId;
+    infoMembersList.innerHTML = group.members.map((m) => {
+      const isMe = myDevId && m.device_id === myDevId;
+      return `
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--bg-card); border-radius: 8px; border: 1px solid var(--border);">
+          <div style="font-weight: 600; font-size: 0.9rem;">${escapeHtml(m.name)} ${isMe ? '<span style="color:var(--primary); font-size:0.75rem;">(You)</span>' : ''}</div>
+          <div style="font-size: 0.72rem; color: var(--text-dim); font-family: monospace;">${m.device_id.slice(0, 8)}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  openModal('modal-group-info');
+}
+
+window.openGroupInfo = openGroupInfo;
+
+function attachGroupCardEvents() {
+  document.querySelectorAll('.group-card').forEach((card) => {
+    const groupId = card.getAttribute('data-group-id');
+    if (!groupId) return;
+
+    let pressTimer = null;
+    let startX = 0;
+    let startY = 0;
+    let didLongPress = false;
+
+    // 3-dot button click
+    const dotsBtn = card.querySelector('.btn-group-dots');
+    if (dotsBtn) {
+      dotsBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        openGroupActions(groupId);
+      });
+    }
+
+    // Long press detection for touch and mouse (480ms hold)
+    const startPress = (e) => {
+      didLongPress = false;
+      const touch = e.touches ? e.touches[0] : e;
+      startX = touch.clientX;
+      startY = touch.clientY;
+      clearTimeout(pressTimer);
+      pressTimer = setTimeout(() => {
+        didLongPress = true;
+        if (navigator.vibrate) {
+          try { navigator.vibrate(40); } catch (_) {}
+        }
+        openGroupActions(groupId);
+      }, 480);
+    };
+
+    const cancelPress = () => {
+      clearTimeout(pressTimer);
+    };
+
+    const movePress = (e) => {
+      const touch = e.touches ? e.touches[0] : e;
+      const dx = Math.abs(touch.clientX - startX);
+      const dy = Math.abs(touch.clientY - startY);
+      if (dx > 10 || dy > 10) {
+        clearTimeout(pressTimer);
+      }
+    };
+
+    card.addEventListener('touchstart', startPress, { passive: true });
+    card.addEventListener('touchmove', movePress, { passive: true });
+    card.addEventListener('touchend', cancelPress);
+    card.addEventListener('touchcancel', cancelPress);
+
+    card.addEventListener('mousedown', startPress);
+    card.addEventListener('mousemove', movePress);
+    card.addEventListener('mouseup', cancelPress);
+    card.addEventListener('mouseleave', cancelPress);
+
+    card.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      openGroupActions(groupId);
+    });
+
+    // Card normal tap/click
+    card.addEventListener('click', () => {
+      if (didLongPress) {
+        didLongPress = false;
+        return;
+      }
+      openGroupDetail(groupId);
+    });
+  });
 }
 
 function renderGroups() {
@@ -833,20 +1004,30 @@ function renderGroups() {
     }
 
     html += `
-      <div class="group-card" onclick="openGroupDetail('${g.id}')">
+      <div class="group-card" data-group-id="${g.id}">
         <div class="group-info">
           <div class="group-avatar">${escapeHtml((g.name || 'G')[0]).toUpperCase()}</div>
-          <div>
+          <div style="min-width: 0;">
             <div class="group-name">${escapeHtml(g.name)}</div>
             <div class="group-meta">${g.members ? g.members.length : 0} members • ${g.expenseCount || 0} expenses</div>
           </div>
         </div>
-        <div class="group-balance">${balanceHtml}</div>
+        <div class="group-card-right">
+          <div class="group-balance">${balanceHtml}</div>
+          <button type="button" class="btn-group-dots" data-dots-id="${g.id}" title="Options" aria-label="Group options">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <circle cx="12" cy="5" r="2.2"/>
+              <circle cx="12" cy="12" r="2.2"/>
+              <circle cx="12" cy="19" r="2.2"/>
+            </svg>
+          </button>
+        </div>
       </div>
     `;
   }
 
   el.groupListContainer.innerHTML = html;
+  attachGroupCardEvents();
   updateHeroBalance(totalOwed, totalOwe);
 }
 
@@ -1101,7 +1282,53 @@ function renderMembersList(members, groupId) {
       }
     )
     .join('');
+
+  // Discovered nearby friends to invite to group
+  const nearbyContainer = document.getElementById('group-nearby-invite-list');
+  if (nearbyContainer) {
+    const peers = (state.info && state.info.peers) || [];
+    const existingDeviceIds = new Set(members.map((m) => m.device_id));
+    const nonMembers = peers.filter((p) => p.deviceId && !existingDeviceIds.has(p.deviceId));
+
+    if (nonMembers.length === 0) {
+      nearbyContainer.innerHTML = `
+        <div style="font-size: 0.82rem; color: var(--text-dim); text-align: center; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+          ${peers.length > 0 ? '🎉 All nearby discovered friends are already members of this group!' : 'No new nearby friends discovered. Ensure Splitwise P2P is open on nearby devices.'}
+        </div>
+      `;
+    } else {
+      nearbyContainer.innerHTML = nonMembers.map((p) => {
+        const pName = p.name || 'Nearby Friend';
+        const initial = (pName[0] || '👤').toUpperCase();
+        return `
+          <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 6px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <div class="group-avatar" style="width: 32px; height: 32px; font-size: 0.85rem; border-radius: 8px;">${escapeHtml(initial)}</div>
+              <div>
+                <div style="font-weight: 600; font-size: 0.9rem;">${escapeHtml(pName)}</div>
+                <div style="font-size: 0.72rem; color: var(--text-dim);">${escapeHtml(p.type || 'Quick Share')}</div>
+              </div>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="sendInviteToPeer('${groupId}', '${escapeHtml(p.deviceId || '')}', '${escapeHtml(pName)}')">
+              ➕ Add to Group
+            </button>
+          </div>
+        `;
+      }).join('');
+    }
+  }
 }
+
+window.sendInviteToPeer = async function(groupId, targetDeviceId, peerName) {
+  const group = state.currentGroupData && state.currentGroupData.group;
+  const groupName = group ? group.name : 'Group';
+
+  await fetchApi(`/api/groups/${groupId}/invite`, {
+    method: 'POST',
+    body: JSON.stringify({ groupName, targetDeviceId }),
+  });
+  showToast(`Invitation sent to ${peerName}!`);
+};
 
 function renderGroupQrCode(group) {
   const primaryIp = state.info && state.info.localIPs ? state.info.localIPs[0] : window.location.hostname;
@@ -1735,21 +1962,72 @@ if (el.csvFileInput) {
   });
 }
 
+function populateCreateGroupNearbyPeers() {
+  const container = document.getElementById('create-group-nearby-list');
+  if (!container) return;
+  const peers = (state.info && state.info.peers) || [];
+
+  if (peers.length === 0) {
+    container.innerHTML = `
+      <div style="font-size: 0.8rem; color: var(--text-muted); text-align: center; padding: 10px;">
+        No nearby friends discovered yet. Keep Splitwise P2P open on both phones to discover automatically!
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = peers.map((p, idx) => {
+    const pName = p.name || 'Nearby Friend';
+    const initial = (pName[0] || '👤').toUpperCase();
+    return `
+      <label class="nearby-peer-pick-item" for="peer-pick-${idx}">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div class="group-avatar" style="width: 30px; height: 30px; font-size: 0.8rem; border-radius: 8px;">${escapeHtml(initial)}</div>
+          <div>
+            <div style="font-size: 0.88rem; font-weight: 600;">${escapeHtml(pName)}</div>
+            <div style="font-size: 0.72rem; color: var(--text-dim);">${escapeHtml(p.type || 'Mesh')}</div>
+          </div>
+        </div>
+        <input type="checkbox" id="peer-pick-${idx}" name="createGroupPeer" value="${escapeHtml(JSON.stringify({ name: pName, deviceId: p.deviceId || p.id || '' }))}">
+      </label>
+    `;
+  }).join('');
+}
+window.populateCreateGroupNearbyPeers = populateCreateGroupNearbyPeers;
+
 safeOn(el.formCreateGroup, 'submit', async (e) => {
   e.preventDefault();
   const name = el.createGroupName.value.trim();
   const yourName = el.createYourName.value.trim();
 
+  const selectedPeers = [];
+  document.querySelectorAll('input[name="createGroupPeer"]:checked').forEach((cb) => {
+    try {
+      selectedPeers.push(JSON.parse(cb.value));
+    } catch (_) {}
+  });
+
   closeModal('modal-create-group');
   const res = await fetchApi('/api/groups', {
     method: 'POST',
-    body: JSON.stringify({ name, yourName }),
+    body: JSON.stringify({ name, yourName, initialMembers: selectedPeers }),
   });
 
   if (res && res.id) {
-    showToast(`Group "${name}" created!`);
+    const memberMsg = selectedPeers.length > 0 ? ` with ${selectedPeers.length + 1} members` : '';
+    showToast(`Group "${name}" created${memberMsg}!`);
     await refreshData();
     openGroupDetail(res.id);
+
+    // Send instant invite to all selected nearby peers
+    for (const p of selectedPeers) {
+      if (p.deviceId) {
+        fetchApi(`/api/groups/${res.id}/invite`, {
+          method: 'POST',
+          body: JSON.stringify({ groupName: name, targetDeviceId: p.deviceId }),
+        });
+      }
+    }
   }
 });
 
@@ -1789,16 +2067,193 @@ safeOn(el.formManualPeer, 'submit', async (e) => {
 });
 
 // Detail Tabs
+function switchDetailTab(targetTab) {
+  document.querySelectorAll('.tabs .tab').forEach((t) => {
+    if (t.getAttribute('data-tab') === targetTab) t.classList.add('active');
+    else t.classList.remove('active');
+  });
+
+  state.activeDetailTab = targetTab;
+  if (el.tabContentExpenses) el.tabContentExpenses.style.display = targetTab === 'expenses' ? 'block' : 'none';
+  if (el.tabContentBalances) el.tabContentBalances.style.display = targetTab === 'balances' ? 'block' : 'none';
+  if (el.tabContentMembers) el.tabContentMembers.style.display = targetTab === 'members' ? 'block' : 'none';
+  const tabContentChat = document.getElementById('tab-content-chat');
+  if (tabContentChat) tabContentChat.style.display = targetTab === 'chat' ? 'block' : 'none';
+
+  if (targetTab === 'chat' && state.activeGroupId) {
+    loadMessages(state.activeGroupId);
+  }
+}
+window.switchDetailTab = switchDetailTab;
+
 document.querySelectorAll('.tabs .tab').forEach((tab) => {
   tab.addEventListener('click', () => {
-    document.querySelectorAll('.tabs .tab').forEach((t) => t.classList.remove('active'));
-    tab.classList.add('active');
-
     const targetTab = tab.getAttribute('data-tab');
-    if (el.tabContentExpenses) el.tabContentExpenses.style.display = targetTab === 'expenses' ? 'block' : 'none';
-    if (el.tabContentBalances) el.tabContentBalances.style.display = targetTab === 'balances' ? 'block' : 'none';
-    if (el.tabContentMembers) el.tabContentMembers.style.display = targetTab === 'members' ? 'block' : 'none';
+    switchDetailTab(targetTab);
   });
+});
+
+// Chat Messages Logic
+async function loadMessages(groupId) {
+  const container = document.getElementById('chat-messages-container');
+  if (!container) return;
+
+  const messages = await fetchApi(`/api/groups/${groupId}/messages`);
+  renderMessages(messages || []);
+}
+
+function renderMessages(messages) {
+  const container = document.getElementById('chat-messages-container');
+  if (!container) return;
+
+  if (!messages || messages.length === 0) {
+    container.innerHTML = `
+      <div class="chat-empty-hint">
+        💬 No messages in this group yet.<br>Say hi! Messages sync automatically offline.
+      </div>
+    `;
+    return;
+  }
+
+  const myDeviceId = state.info && state.info.deviceId;
+
+  container.innerHTML = messages.map((m) => {
+    const isMine = myDeviceId && m.sender_device_id === myDeviceId;
+    const timeStr = m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
+    return `
+      <div class="chat-bubble ${isMine ? 'mine' : 'peer'}">
+        <div class="chat-sender-name">${escapeHtml(isMine ? 'You' : m.sender_name)}</div>
+        <div class="chat-text">${escapeHtml(m.text)}</div>
+        <div class="chat-time">${timeStr}</div>
+      </div>
+    `;
+  }).join('');
+
+  container.scrollTop = container.scrollHeight;
+}
+
+safeOn(document.getElementById('form-chat-send'), 'submit', async (e) => {
+  e.preventDefault();
+  const input = document.getElementById('input-chat-text');
+  if (!input || !state.activeGroupId) return;
+  const text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  await fetchApi(`/api/groups/${state.activeGroupId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ text }),
+  });
+  await loadMessages(state.activeGroupId);
+});
+
+// Pending Invites Logic
+async function loadPendingInvites() {
+  const container = document.getElementById('pending-invites-container');
+  if (!container) return;
+
+  const invites = await fetchApi('/api/invites');
+  if (!invites || invites.length === 0) {
+    container.style.display = 'none';
+    container.innerHTML = '';
+    return;
+  }
+
+  container.style.display = 'block';
+  container.innerHTML = invites.map((inv) => `
+    <div class="invite-banner-card">
+      <div class="invite-banner-info">
+        <div style="font-weight: 700; font-size: 0.95rem; color: var(--text); margin-bottom: 2px;">
+          📩 Group Invitation
+        </div>
+        <div style="font-size: 0.82rem; color: var(--text-muted);">
+          <strong>${escapeHtml(inv.inviterName || 'A friend')}</strong> invited you to join <strong>"${escapeHtml(inv.groupName)}"</strong>
+        </div>
+      </div>
+      <div class="invite-banner-actions">
+        <button class="btn btn-primary btn-sm" onclick="acceptGroupInvite('${inv.groupId}', '${escapeHtml(inv.groupName)}')">
+          Accept & Join
+        </button>
+        <button class="btn btn-secondary btn-sm" onclick="dismissGroupInvite('${inv.groupId}')">
+          ✕
+        </button>
+      </div>
+    </div>
+  `).join('');
+}
+
+window.acceptGroupInvite = async function(groupId, groupName) {
+  const myName = (state.info && state.info.deviceName) || 'Me';
+  await fetchApi('/api/groups/join', {
+    method: 'POST',
+    body: JSON.stringify({ groupId, yourName: myName }),
+  });
+  await fetchApi('/api/invites/dismiss', {
+    method: 'POST',
+    body: JSON.stringify({ groupId }),
+  });
+  showToast(`Joined group "${groupName}"!`);
+  await refreshData();
+  openGroupDetail(groupId);
+};
+
+window.dismissGroupInvite = async function(groupId) {
+  await fetchApi('/api/invites/dismiss', {
+    method: 'POST',
+    body: JSON.stringify({ groupId }),
+  });
+  loadPendingInvites();
+};
+
+// Group Actions Sheet Button Handlers
+safeOn(document.getElementById('btn-sheet-info'), 'click', () => {
+  closeModal('modal-group-actions');
+  if (currentActionGroupId) openGroupInfo(currentActionGroupId);
+});
+
+safeOn(document.getElementById('btn-sheet-chat'), 'click', async () => {
+  closeModal('modal-group-actions');
+  if (currentActionGroupId) {
+    await openGroupDetail(currentActionGroupId);
+    switchDetailTab('chat');
+  }
+});
+
+safeOn(document.getElementById('btn-sheet-qr'), 'click', () => {
+  closeModal('modal-group-actions');
+  if (currentActionGroupId) {
+    const group = state.groups.find((g) => g.id === currentActionGroupId);
+    if (group) {
+      renderGroupQrCode(group);
+      openModal('modal-group-qr');
+    }
+  }
+});
+
+safeOn(document.getElementById('btn-sheet-delete'), 'click', async () => {
+  closeModal('modal-group-actions');
+  if (!currentActionGroupId) return;
+  const group = state.groups.find((g) => g.id === currentActionGroupId);
+  const gName = group ? group.name : 'this group';
+
+  const confirmed = confirm(
+    `Delete group "${gName}"?\n\nThis will permanently remove all expenses, member balances, and chat history for this group on your device.`
+  );
+  if (!confirmed) return;
+
+  await fetchApi(`/api/groups/${currentActionGroupId}`, { method: 'DELETE' });
+  showToast(`Group "${gName}" deleted`);
+  await refreshData();
+});
+
+safeOn(document.getElementById('btn-info-modal-copy-id'), 'click', () => {
+  const badge = document.getElementById('info-modal-id-badge');
+  const gid = badge ? badge.getAttribute('data-gid') : currentActionGroupId;
+  if (gid) {
+    navigator.clipboard.writeText(gid);
+    showToast('Group ID copied to clipboard');
+  }
 });
 
 // Bottom Navigation items
