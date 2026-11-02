@@ -528,7 +528,7 @@ async function fetchApi(endpoint, options = {}) {
       if (endpoint === '/api/version') {
         const nativeVer = (typeof window.AndroidBridge.getAppVersion === 'function')
           ? window.AndroidBridge.getAppVersion()
-          : '1.2.0';
+          : '1.2.1';
         return {
           version: nativeVer,
           repo: 'FLAMEPOSEIDON/splitwise-p2p',

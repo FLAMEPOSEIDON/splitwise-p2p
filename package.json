@@ -1,6 +1,6 @@
 {
   "name": "splitwise-p2p",
-  "version": "1.0.0",
+  "version": "1.2.1",
   "description": "Local-network peer-to-peer expense splitting app (Splitwise alternative)",
   "main": "index.js",
   "type": "commonjs",

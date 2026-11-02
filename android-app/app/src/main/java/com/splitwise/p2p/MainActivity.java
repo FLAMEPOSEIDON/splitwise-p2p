@@ -129,7 +129,9 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         settings.setDatabaseEnabled(true);
         settings.setAllowFileAccess(true);
         settings.setAllowContentAccess(true);
-        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+        settings.setAllowFileAccessFromFileURLs(true);
+        settings.setAllowUniversalAccessFromFileURLs(true);
+        settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
 
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
@@ -206,15 +208,53 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         // Attach Android Native Bridge to JavaScript
         webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
 
-        // Load bundled native app assets (or cached OTA updates if present)
+        // Clean up older OTA cache if a newer APK version has been installed manually
+        try {
+            android.content.pm.PackageInfo pInfo = getPackageManager().getPackageInfo(getPackageName(), 0);
+            long lastApkUpdate = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getLong("last_apk_update_time", 0);
+            if (pInfo.lastUpdateTime > lastApkUpdate) {
+                File otaDir = new File(getFilesDir(), "ota_www");
+                if (otaDir.exists()) {
+                    File[] files = otaDir.listFiles();
+                    if (files != null) {
+                        for (File f : files) f.delete();
+                    }
+                    otaDir.delete();
+                }
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                        .edit()
+                        .putLong("last_apk_update_time", pInfo.lastUpdateTime)
+                        .apply();
+            }
+        } catch (Exception ignored) {}
+
+        // Load bundled native app assets (or updated OTA files if present)
+        loadAppContent();
+    }
+
+    private void loadAppContent() {
+        try {
+            File otaIndex = new File(new File(getFilesDir(), "ota_www"), "index.html");
+            File otaJs = new File(new File(getFilesDir(), "ota_www"), "app.js");
+            if (otaIndex.exists() && otaIndex.length() > 0 && otaJs.exists() && otaJs.length() > 0) {
+                Log.d(TAG, "Loading updated OTA content from: " + otaIndex.getAbsolutePath());
+                webView.loadUrl("file://" + otaIndex.getAbsolutePath());
+                return;
+            }
+        } catch (Exception ignored) {}
+        Log.d(TAG, "Loading bundled asset content from: file:///android_asset/www/index.html");
         webView.loadUrl("file:///android_asset/www/index.html");
     }
 
     private WebResourceResponse getOtaResource(String url) {
-        if (url == null || !url.startsWith("file:///android_asset/www/")) {
-            return null;
+        if (url == null) return null;
+        String filename = null;
+        if (url.startsWith("file:///android_asset/www/")) {
+            filename = url.substring("file:///android_asset/www/".length());
+        } else if (url.contains("/ota_www/")) {
+            filename = url.substring(url.indexOf("/ota_www/") + "/ota_www/".length());
         }
-        String filename = url.substring("file:///android_asset/www/".length());
+        if (filename == null) return null;
         if (filename.contains("?")) filename = filename.substring(0, filename.indexOf("?"));
         if (filename.contains("#")) filename = filename.substring(0, filename.indexOf("#"));
 
@@ -227,7 +267,12 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                 else if (filename.endsWith(".css")) mimeType = "text/css";
                 else if (filename.endsWith(".svg")) mimeType = "image/svg+xml";
                 else if (filename.endsWith(".json")) mimeType = "application/json";
-                return new WebResourceResponse(mimeType, "UTF-8", new FileInputStream(otaFile));
+
+                java.util.Map<String, String> headers = new java.util.HashMap<>();
+                headers.put("Access-Control-Allow-Origin", "*");
+                headers.put("Cache-Control", "no-cache, no-store, must-revalidate");
+                headers.put("Pragma", "no-cache");
+                return new WebResourceResponse(mimeType, "UTF-8", 200, "OK", headers, new FileInputStream(otaFile));
             } catch (Exception ignored) {}
         }
         return null;
@@ -692,7 +737,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                 android.content.pm.PackageInfo pInfo = getPackageManager().getPackageInfo(getPackageName(), 0);
                 return pInfo.versionName;
             } catch (Exception e) {
-                return "1.2.0";
+                return "1.2.1";
             }
         }
 
@@ -766,7 +811,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                     runOnUiThread(() -> {
                         Toast.makeText(MainActivity.this, "🎉 Update applied directly! App is restarting...", Toast.LENGTH_LONG).show();
                         webView.clearCache(true);
-                        webView.reload();
+                        loadAppContent();
                     });
                 } catch (Exception e) {
                     Log.e(TAG, "OTA update error: " + e.getMessage(), e);
