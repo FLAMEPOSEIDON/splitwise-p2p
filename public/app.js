@@ -2411,9 +2411,15 @@ async function checkForUpdates(isManual = false) {
   }
 
   try {
-    const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/commits/main`, {
-      headers: { Accept: 'application/vnd.github.v3+json' },
-    });
+    const headers = { Accept: 'application/vnd.github.v3+json' };
+    const pat = (isNativeApp && window.AndroidBridge && typeof window.AndroidBridge.getGitHubToken === 'function')
+      ? window.AndroidBridge.getGitHubToken()
+      : localStorage.getItem('splitwise_github_pat');
+    if (pat && pat.trim()) {
+      headers['Authorization'] = `Bearer ${pat.trim()}`;
+    }
+
+    const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/commits/main`, { headers });
 
     if (!res.ok) throw new Error(`GitHub API HTTP ${res.status}`);
     const commitData = await res.json();
@@ -2423,7 +2429,7 @@ async function checkForUpdates(isManual = false) {
     const commitDate = new Date(commitData.commit.author.date).toLocaleString('en-IN');
     const commitAuthor = commitData.commit.author.name;
 
-    const currentSha = localStorage.getItem('splitwise_installed_commit') || 'b6bb060';
+    const currentSha = localStorage.getItem('splitwise_installed_commit') || '';
 
     latestUpdateData = {
       sha: latestSha,
@@ -2435,7 +2441,7 @@ async function checkForUpdates(isManual = false) {
       repoUrl: `https://github.com/${GITHUB_REPO}`,
     };
 
-    if (latestSha !== currentSha) {
+    if (currentSha && latestSha !== currentSha) {
       if (el.btnHeaderUpdate) el.btnHeaderUpdate.style.display = 'inline-flex';
       if (el.updateStatusText) {
         el.updateStatusText.innerHTML = `🚀 <strong style="color: var(--cyan);">Update Available:</strong> ${escapeHtml(commitMsg)} (${latestSha})`;
@@ -2443,6 +2449,16 @@ async function checkForUpdates(isManual = false) {
 
       if (isManual) {
         openUpdateModal();
+      }
+    } else if (!currentSha) {
+      // First run on this build: record this sha as current
+      localStorage.setItem('splitwise_installed_commit', latestSha);
+      if (el.btnHeaderUpdate) el.btnHeaderUpdate.style.display = 'none';
+      if (el.updateStatusText) {
+        el.updateStatusText.innerHTML = `✅ Up to date (${latestSha})`;
+      }
+      if (isManual) {
+        showToast('App is up to date!');
       }
     } else {
       if (el.btnHeaderUpdate) el.btnHeaderUpdate.style.display = 'none';
@@ -2457,7 +2473,7 @@ async function checkForUpdates(isManual = false) {
     console.warn('Update check failed:', err);
     if (isManual) {
       if (el.updateStatusText) {
-        el.updateStatusText.textContent = 'Could not reach GitHub. Check your internet connection.';
+        el.updateStatusText.textContent = 'Could not reach GitHub. Check your internet connection or repository visibility.';
       }
       showToast('Could not reach GitHub.');
     }
@@ -2482,7 +2498,6 @@ function performAppUpdate() {
   if (!latestUpdateData) return;
 
   const targetSha = latestUpdateData.sha;
-  localStorage.setItem('splitwise_installed_commit', targetSha);
   closeModal('modal-update-available');
 
   if (isNativeApp && window.AndroidBridge && typeof window.AndroidBridge.performOtaUpdate === 'function') {
@@ -2492,6 +2507,7 @@ function performAppUpdate() {
     window.AndroidBridge.installApkUpdate(latestUpdateData.downloadUrl);
     showToast('Starting APK download & update...');
   } else {
+    localStorage.setItem('splitwise_installed_commit', targetSha);
     window.open(latestUpdateData.downloadUrl, '_blank');
     showToast('Opening download link...');
     setTimeout(() => {

@@ -238,17 +238,18 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
     }
 
     private void loadAppContent() {
-        try {
-            File otaIndex = new File(new File(getFilesDir(), "ota_www"), "index.html");
-            File otaJs = new File(new File(getFilesDir(), "ota_www"), "app.js");
-            if (otaIndex.exists() && otaIndex.length() > 0 && otaJs.exists() && otaJs.length() > 0) {
-                Log.d(TAG, "Loading updated OTA content from: " + otaIndex.getAbsolutePath());
-                webView.loadUrl("file://" + otaIndex.getAbsolutePath());
-                return;
-            }
-        } catch (Exception ignored) {}
-        Log.d(TAG, "Loading bundled asset content from: file:///android_asset/www/index.html");
+        Log.d(TAG, "Loading app content from: file:///android_asset/www/index.html");
         webView.loadUrl("file:///android_asset/www/index.html");
+    }
+
+    private String getMimeType(String filename) {
+        if (filename.endsWith(".html")) return "text/html";
+        if (filename.endsWith(".js")) return "application/javascript";
+        if (filename.endsWith(".css")) return "text/css";
+        if (filename.endsWith(".svg")) return "image/svg+xml";
+        if (filename.endsWith(".json")) return "application/json";
+        if (filename.endsWith(".png")) return "image/png";
+        return "text/plain";
     }
 
     private WebResourceResponse getOtaResource(String url) {
@@ -258,28 +259,41 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
             filename = url.substring("file:///android_asset/www/".length());
         } else if (url.contains("/ota_www/")) {
             filename = url.substring(url.indexOf("/ota_www/") + "/ota_www/".length());
+        } else if (url.startsWith("file:///")) {
+            // Safety fallback for any root-relative files (e.g. file:///styles.css, file:///app.js)
+            String stripped = url.substring("file:///".length());
+            if (stripped.startsWith("icons/")) {
+                filename = stripped;
+            } else if (!stripped.contains("/")) {
+                filename = stripped;
+            }
         }
-        if (filename == null) return null;
+        if (filename == null || filename.isEmpty()) return null;
         if (filename.contains("?")) filename = filename.substring(0, filename.indexOf("?"));
         if (filename.contains("#")) filename = filename.substring(0, filename.indexOf("#"));
 
+        // 1. Check if newer OTA version exists in internal files directory
         File otaFile = new File(new File(getFilesDir(), "ota_www"), filename);
         if (otaFile.exists() && otaFile.isFile() && otaFile.length() > 0) {
             try {
-                String mimeType = "text/plain";
-                if (filename.endsWith(".html")) mimeType = "text/html";
-                else if (filename.endsWith(".js")) mimeType = "application/javascript";
-                else if (filename.endsWith(".css")) mimeType = "text/css";
-                else if (filename.endsWith(".svg")) mimeType = "image/svg+xml";
-                else if (filename.endsWith(".json")) mimeType = "application/json";
-
                 java.util.Map<String, String> headers = new java.util.HashMap<>();
                 headers.put("Access-Control-Allow-Origin", "*");
                 headers.put("Cache-Control", "no-cache, no-store, must-revalidate");
                 headers.put("Pragma", "no-cache");
-                return new WebResourceResponse(mimeType, "UTF-8", 200, "OK", headers, new FileInputStream(otaFile));
+                return new WebResourceResponse(getMimeType(filename), "UTF-8", 200, "OK", headers, new FileInputStream(otaFile));
             } catch (Exception ignored) {}
         }
+
+        // 2. Fallback to bundled asset if requested via root-relative path (e.g. file:///styles.css)
+        if (url.startsWith("file:///") && !url.startsWith("file:///android_asset/")) {
+            try {
+                InputStream is = getAssets().open("www/" + filename);
+                java.util.Map<String, String> headers = new java.util.HashMap<>();
+                headers.put("Access-Control-Allow-Origin", "*");
+                return new WebResourceResponse(getMimeType(filename), "UTF-8", 200, "OK", headers, is);
+            } catch (Exception ignored) {}
+        }
+
         return null;
     }
 
@@ -806,7 +820,12 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                 conn.setConnectTimeout(15000);
                 conn.setReadTimeout(30000);
                 conn.setInstanceFollowRedirects(true);
-                conn.setRequestProperty("User-Agent", "SplitwiseP2P-OTA");
+                conn.setRequestProperty("User-Agent", "SplitwiseP2P-Android");
+                conn.setRequestProperty("Accept", "*/*");
+                String pat = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString("github_pat", null);
+                if (pat != null && !pat.trim().isEmpty()) {
+                    conn.setRequestProperty("Authorization", "Bearer " + pat.trim());
+                }
                 int code = conn.getResponseCode();
                 if (code == HttpURLConnection.HTTP_MOVED_PERM || code == HttpURLConnection.HTTP_MOVED_TEMP || code == 307 || code == 308) {
                     String loc = conn.getHeaderField("Location");
@@ -824,11 +843,29 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         }
 
         @JavascriptInterface
+        public void setGitHubToken(String token) {
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .edit()
+                    .putString("github_pat", token != null ? token.trim() : "")
+                    .apply();
+        }
+
+        @JavascriptInterface
+        public String getGitHubToken() {
+            return getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString("github_pat", "");
+        }
+
+        @JavascriptInterface
         public void performOtaUpdate(String commitSha) {
             new Thread(() -> {
                 runOnUiThread(() -> Toast.makeText(MainActivity.this, "⚡ Updating directly over-the-air...", Toast.LENGTH_SHORT).show());
                 try {
-                    String baseUrl = "https://raw.githubusercontent.com/FLAMEPOSEIDON/splitwise-p2p/main/android-app/app/src/main/assets/www/";
+                    String[] baseUrls = {
+                        "https://raw.githubusercontent.com/FLAMEPOSEIDON/splitwise-p2p/main/android-app/app/src/main/assets/www/",
+                        "https://cdn.jsdelivr.net/gh/FLAMEPOSEIDON/splitwise-p2p@main/android-app/app/src/main/assets/www/",
+                        "https://raw.githubusercontent.com/FLAMEPOSEIDON/splitwise-p2p/main/public/",
+                        "https://cdn.jsdelivr.net/gh/FLAMEPOSEIDON/splitwise-p2p@main/public/"
+                    };
                     String[] files = {"index.html", "styles.css", "app.js", "qrcode.js"};
 
                     File otaDir = new File(getFilesDir(), "ota_www");
@@ -837,17 +874,36 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                     File tempDir = new File(getFilesDir(), "ota_temp");
                     if (!tempDir.exists()) tempDir.mkdirs();
 
-                    for (String fName : files) {
-                        String fileUrl = baseUrl + fName + "?v=" + System.currentTimeMillis();
-                        File tmp = new File(tempDir, fName);
-                        try (InputStream in = openStreamWithRedirects(fileUrl);
-                             FileOutputStream out = new FileOutputStream(tmp)) {
-                            byte[] buffer = new byte[8192];
-                            int read;
-                            while ((read = in.read(buffer)) != -1) {
-                                out.write(buffer, 0, read);
+                    boolean allSuccess = false;
+                    for (String baseUrl : baseUrls) {
+                        boolean candidateSuccess = true;
+                        for (String fName : files) {
+                            String fileUrl = baseUrl + fName + "?v=" + System.currentTimeMillis();
+                            File tmp = new File(tempDir, fName);
+                            try (InputStream in = openStreamWithRedirects(fileUrl);
+                                 FileOutputStream out = new FileOutputStream(tmp)) {
+                                byte[] buffer = new byte[8192];
+                                int read;
+                                while ((read = in.read(buffer)) != -1) {
+                                    out.write(buffer, 0, read);
+                                }
+                            } catch (Exception ex) {
+                                candidateSuccess = false;
+                                break;
+                            }
+                            if (tmp.length() == 0) {
+                                candidateSuccess = false;
+                                break;
                             }
                         }
+                        if (candidateSuccess) {
+                            allSuccess = true;
+                            break;
+                        }
+                    }
+
+                    if (!allSuccess) {
+                        throw new Exception("Could not fetch OTA files. Check internet or repo visibility.");
                     }
 
                     // Move to ota_www atomically
@@ -868,7 +924,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                     runOnUiThread(() -> {
                         Toast.makeText(MainActivity.this, "🎉 Update applied directly! App is restarting...", Toast.LENGTH_LONG).show();
                         webView.clearCache(true);
-                        loadAppContent();
+                        webView.reload();
                     });
                 } catch (Exception e) {
                     Log.e(TAG, "OTA update error: " + e.getMessage(), e);
@@ -889,8 +945,9 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                             ? downloadUrl.trim()
                             : "https://github.com/FLAMEPOSEIDON/splitwise-p2p/releases/latest/download/SplitwiseP2P.apk";
 
-                    File cacheDir = getExternalCacheDir() != null ? getExternalCacheDir() : getCacheDir();
-                    File apkFile = new File(cacheDir, "SplitwiseP2P-update.apk");
+                    File destDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+                    if (destDir == null) destDir = getFilesDir();
+                    File apkFile = new File(destDir, "SplitwiseP2P-update.apk");
                     if (apkFile.exists()) apkFile.delete();
 
                     try (InputStream in = openStreamWithRedirects(url);
