@@ -320,6 +320,12 @@ public class NearbySyncService {
         }
     }
 
+    public void broadcastGroupRename(JSONObject packet) {
+        for (String endpointId : connectedEndpoints.keySet()) {
+            sendPayload(endpointId, packet);
+        }
+    }
+
     private void sendPayload(String endpointId, JSONObject msg) {
         try {
             byte[] bytes = msg.toString().getBytes(StandardCharsets.UTF_8);
@@ -344,6 +350,7 @@ public class NearbySyncService {
                     meta.put("name", gName);
                     meta.put("created_by", g.optString("created_by", ""));
                     meta.put("created_at", g.optString("created_at", ""));
+                    meta.put("updated_hlc", g.optString("updated_hlc", ""));
                     groupMeta.put(gid, meta);
                 }
             }
@@ -380,9 +387,25 @@ public class NearbySyncService {
                 handleGroupInvite(msg);
             } else if ("INSTANT_CHAT".equals(type)) {
                 handleInstantChat(msg);
+            } else if ("GROUP_RENAME".equals(type)) {
+                handleGroupRename(msg);
             }
         } catch (Exception e) {
             Log.e(TAG, "Error parsing nearby message", e);
+        }
+    }
+
+    private void handleGroupRename(JSONObject msg) {
+        try {
+            String remoteDeviceId = msg.optString("deviceId", "");
+            if (remoteDeviceId.equals(deviceId)) return;
+            String gid = msg.getString("groupId");
+            String newName = msg.getString("name");
+            String updatedHlc = msg.optString("updated_hlc", "");
+            db.upsertGroupInfo(gid, newName, "", "", updatedHlc);
+            mainHandler.post(() -> listener.onDataMerged(1));
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling group rename nearby", e);
         }
     }
 
@@ -427,7 +450,7 @@ public class NearbySyncService {
                     if (meta != null) {
                         String gName = meta.optString("name", "");
                         if (!gName.isEmpty() && !gName.equalsIgnoreCase("(syncing...)")) {
-                            db.upsertGroupInfo(gid, gName, meta.optString("created_by", ""), meta.optString("created_at", ""));
+                            db.upsertGroupInfo(gid, gName, meta.optString("created_by", ""), meta.optString("created_at", ""), meta.optString("updated_hlc", ""));
                             anyUpdated = true;
                         }
                     }
@@ -564,7 +587,7 @@ public class NearbySyncService {
             String gid = msg.getString("groupId");
             JSONObject info = msg.optJSONObject("info");
             if (info != null) {
-                db.upsertGroupInfo(gid, info.getString("name"), info.getString("created_by"), info.getString("created_at"));
+                db.upsertGroupInfo(gid, info.optString("name", ""), info.optString("created_by", ""), info.optString("created_at", ""), info.optString("updated_hlc", ""));
             }
             JSONArray members = msg.optJSONArray("members");
             if (members != null) {

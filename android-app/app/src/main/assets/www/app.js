@@ -136,6 +136,11 @@ const el = {
   detailGroupId: document.getElementById('detail-group-id'),
   detailGroupMeta: document.getElementById('detail-group-meta'),
   detailGroupBalance: document.getElementById('detail-group-balance'),
+  btnRenameGroup: document.getElementById('btn-rename-group'),
+  btnSheetRename: document.getElementById('btn-sheet-rename'),
+  modalRenameGroup: document.getElementById('modal-rename-group'),
+  formRenameGroup: document.getElementById('form-rename-group'),
+  inputRenameGroupName: document.getElementById('input-rename-group-name'),
   btnShowGroupQr: document.getElementById('btn-show-group-qr'),
   btnImportCsvDetail: document.getElementById('btn-import-csv-detail'),
   btnExportCsv: document.getElementById('btn-export-csv'),
@@ -625,6 +630,12 @@ async function fetchApi(endpoint, options = {}) {
       const matchDetail = endpoint.match(/^\/api\/groups\/([a-zA-Z0-9_-]+)$/);
       if (matchDetail && (!options.method || options.method === 'GET')) {
         return JSON.parse(window.AndroidBridge.getGroupDetail(matchDetail[1]));
+      }
+      if (matchDetail && options.method === 'PUT') {
+        const body = JSON.parse(options.body || '{}');
+        if (typeof window.AndroidBridge.renameGroup === 'function') {
+          return JSON.parse(window.AndroidBridge.renameGroup(matchDetail[1], body.name || ''));
+        }
       }
       if (matchDetail && options.method === 'DELETE') {
         window.AndroidBridge.deleteGroup(matchDetail[1]);
@@ -1922,6 +1933,69 @@ async function deleteCurrentGroup() {
 
 safeOn(el.btnDeleteGroup, 'click', deleteCurrentGroup);
 window.deleteCurrentGroup = deleteCurrentGroup;
+
+let renameTargetGroupId = null;
+
+function openRenameGroupModal(groupId) {
+  renameTargetGroupId = groupId || state.activeGroupId || currentActionGroupId;
+  if (!renameTargetGroupId) return;
+
+  let currentName = '';
+  if (state.currentGroupData && state.currentGroupData.group && state.currentGroupData.group.id === renameTargetGroupId) {
+    currentName = state.currentGroupData.group.name;
+  } else if (state.groups) {
+    const g = state.groups.find((x) => x.id === renameTargetGroupId);
+    if (g) currentName = g.name;
+  }
+
+  if (el.inputRenameGroupName) {
+    el.inputRenameGroupName.value = (currentName && currentName !== '(syncing...)') ? currentName : '';
+  }
+  closeModal('modal-group-actions');
+  closeModal('modal-group-info');
+  openModal('modal-rename-group');
+  setTimeout(() => {
+    if (el.inputRenameGroupName) el.inputRenameGroupName.focus();
+  }, 150);
+}
+window.openRenameGroupModal = openRenameGroupModal;
+
+safeOn(el.btnRenameGroup, 'click', () => openRenameGroupModal(state.activeGroupId));
+safeOn(el.btnSheetRename, 'click', () => openRenameGroupModal(currentActionGroupId));
+
+safeOn(el.formRenameGroup, 'submit', async (e) => {
+  e.preventDefault();
+  const newName = el.inputRenameGroupName ? el.inputRenameGroupName.value.trim() : '';
+  if (!newName) {
+    alert('Please enter a valid group name.');
+    return;
+  }
+  if (newName.toLowerCase() === '(syncing...)') {
+    alert('Please enter a descriptive group name.');
+    return;
+  }
+
+  const targetGid = renameTargetGroupId || state.activeGroupId;
+  if (!targetGid) return;
+
+  closeModal('modal-rename-group');
+  showToast(`Updating group name to "${newName}"...`);
+
+  const res = await fetchApi(`/api/groups/${targetGid}`, {
+    method: 'PUT',
+    body: JSON.stringify({ name: newName }),
+  });
+
+  if (res && res.success !== false) {
+    showToast(`🎉 Group renamed to "${newName}" and synced with all members!`);
+    await refreshData();
+    if (state.activeGroupId === targetGid) {
+      await loadGroupDetail(targetGid, false);
+    }
+  } else {
+    showToast((res && res.error) || 'Failed to rename group');
+  }
+});
 
 // -------------------------------------------------------------
 // 10. Splitwise CSV Import & Export

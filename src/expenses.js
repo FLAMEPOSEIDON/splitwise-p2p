@@ -114,6 +114,15 @@ function getGroup(groupId) {
   return db.prepare(`SELECT * FROM groups WHERE id = ?`).get(groupId);
 }
 
+function renameGroup(groupId, newName) {
+  if (!groupId || !newName || !newName.trim()) return null;
+  const trimmed = newName.trim();
+  const oldName = getGroupName(groupId);
+  db.prepare(`UPDATE groups SET name = ? WHERE id = ?`).run(trimmed, groupId);
+  logActivity(groupId, 'GROUP_RENAMED', '✏️', 'Group renamed', `Renamed from "${oldName}" to "${trimmed}"`, null, 0, new Date().toISOString(), new Date().toISOString().split('T')[0]);
+  return getGroup(groupId);
+}
+
 function listGroups() {
   return db.prepare(`SELECT * FROM groups ORDER BY created_at DESC`).all();
 }
@@ -858,6 +867,7 @@ function dismissInvite(groupId) {
 
 module.exports = {
   createGroup,
+  renameGroup,
   deleteGroup,
   joinGroupStub,
   updateGroupInfo,

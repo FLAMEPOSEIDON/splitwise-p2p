@@ -99,8 +99,15 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         try {
             db.execSQL("ALTER TABLE expenses ADD COLUMN date TEXT;");
         } catch (Exception ignored) {}
+        ensureGroupColumns(db);
         ensureActivityTable(db);
         ensureChatAndInviteTables(db);
+    }
+
+    public void ensureGroupColumns(SQLiteDatabase db) {
+        try {
+            db.execSQL("ALTER TABLE groups ADD COLUMN updated_hlc TEXT;");
+        } catch (Exception ignored) {}
     }
 
     public void ensureActivityTable(SQLiteDatabase db) {
@@ -212,14 +219,17 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
     public JSONObject createGroup(String name, String deviceId, String memberName) {
         SQLiteDatabase db = getWritableDatabase();
+        ensureGroupColumns(db);
         String groupId = UUID.randomUUID().toString();
         String now = nowIso();
+        String hlc = System.currentTimeMillis() + "-0000-" + (deviceId != null ? deviceId : "0000");
 
         ContentValues cv = new ContentValues();
         cv.put("id", groupId);
         cv.put("name", name);
         cv.put("created_by", deviceId);
         cv.put("created_at", now);
+        cv.put("updated_hlc", hlc);
         db.insert("groups", null, cv);
 
         addMember(groupId, memberName, deviceId);
@@ -230,6 +240,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             obj.put("name", name);
             obj.put("created_by", deviceId);
             obj.put("created_at", now);
+            obj.put("updated_hlc", hlc);
             return obj;
         } catch (Exception e) {
             return new JSONObject();
@@ -362,33 +373,84 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         joinGroup(groupId, "", deviceId, yourName);
     }
 
-    public void updateGroupInfo(String groupId, String name, String createdBy, String createdAt) {
+    public JSONObject renameGroup(HlcClock clock, String groupId, String newName) {
+        if (groupId == null || newName == null || newName.trim().isEmpty()) return new JSONObject();
+        String trimmedName = newName.trim();
+        String hlc = clock != null ? clock.tick() : (System.currentTimeMillis() + "-0000-0000");
         SQLiteDatabase db = getWritableDatabase();
+        ensureGroupColumns(db);
+
+        String oldName = getGroupName(groupId);
         ContentValues cv = new ContentValues();
-        cv.put("name", name);
-        cv.put("created_by", createdBy);
-        cv.put("created_at", createdAt);
+        cv.put("name", trimmedName);
+        cv.put("updated_hlc", hlc);
         db.update("groups", cv, "id = ?", new String[]{groupId});
+
+        logActivity(groupId, "GROUP_RENAMED", "✏️", "Group renamed", "Renamed from \"" + oldName + "\" to \"" + trimmedName + "\"", null, 0, nowIso(), todayDate());
+
+        JSONObject obj = new JSONObject();
+        try {
+            obj.put("id", groupId);
+            obj.put("name", trimmedName);
+            obj.put("updated_hlc", hlc);
+            obj.put("success", true);
+        } catch (Exception ignored) {}
+        return obj;
+    }
+
+    public String getGroupUpdatedHlc(String groupId) {
+        if (groupId == null) return "000000000000000-0000-0000";
+        SQLiteDatabase db = getReadableDatabase();
+        ensureGroupColumns(db);
+        try (Cursor c = db.rawQuery("SELECT updated_hlc FROM groups WHERE id = ?", new String[]{groupId})) {
+            if (c.moveToFirst()) {
+                String hlc = c.getString(0);
+                if (hlc != null && !hlc.isEmpty()) return hlc;
+            }
+        } catch (Exception ignored) {}
+        return "000000000000000-0000-0000";
+    }
+
+    public void updateGroupInfo(String groupId, String name, String createdBy, String createdAt) {
+        upsertGroupInfo(groupId, name, createdBy, createdAt, null);
     }
 
     public void upsertGroupInfo(String groupId, String name, String createdBy, String createdAt) {
+        upsertGroupInfo(groupId, name, createdBy, createdAt, null);
+    }
+
+    public void upsertGroupInfo(String groupId, String name, String createdBy, String createdAt, String updatedHlc) {
         if (groupId == null || groupId.trim().isEmpty()) return;
         SQLiteDatabase db = getWritableDatabase();
-        Cursor c = db.rawQuery("SELECT name, created_by, created_at FROM groups WHERE id = ?", new String[]{groupId});
+        ensureGroupColumns(db);
+        Cursor c = db.rawQuery("SELECT name, created_by, created_at, updated_hlc FROM groups WHERE id = ?", new String[]{groupId});
         boolean exists = c.moveToFirst();
         String currentName = exists ? c.getString(0) : null;
         String currentCreatedBy = exists ? c.getString(1) : null;
         String currentCreatedAt = exists ? c.getString(2) : null;
+        String currentHlc = exists ? c.getString(3) : null;
         c.close();
 
         boolean isIncomingValid = name != null && !name.trim().isEmpty() && !name.trim().equalsIgnoreCase("(syncing...)");
         boolean isCurrentValid = exists && currentName != null && !currentName.trim().isEmpty() && !currentName.trim().equalsIgnoreCase("(syncing...)");
 
         String finalName;
-        if (isIncomingValid) {
+        String finalHlc = (updatedHlc != null && !updatedHlc.isEmpty()) ? updatedHlc : (currentHlc != null ? currentHlc : "");
+
+        if (isIncomingValid && !isCurrentValid) {
             finalName = name.trim();
-        } else if (isCurrentValid) {
+        } else if (!isIncomingValid && isCurrentValid) {
             finalName = currentName.trim();
+        } else if (isIncomingValid && isCurrentValid) {
+            if (updatedHlc != null && currentHlc != null && !updatedHlc.isEmpty() && !currentHlc.isEmpty()) {
+                if (HlcClock.compare(updatedHlc, currentHlc) > 0) {
+                    finalName = name.trim();
+                } else {
+                    finalName = currentName.trim();
+                }
+            } else {
+                finalName = name.trim();
+            }
         } else {
             finalName = "(syncing...)";
         }
@@ -401,6 +463,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         cv.put("name", finalName);
         cv.put("created_by", finalCreatedBy);
         cv.put("created_at", finalCreatedAt);
+        cv.put("updated_hlc", finalHlc);
         db.insertWithOnConflict("groups", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
     }
 
@@ -420,6 +483,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
     public JSONArray listGroups(String myDeviceId) {
         SQLiteDatabase db = getReadableDatabase();
+        ensureGroupColumns(db);
         JSONArray arr = new JSONArray();
         Cursor c = db.rawQuery("SELECT * FROM groups ORDER BY created_at DESC", null);
         try {
@@ -430,6 +494,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 g.put("name", c.getString(c.getColumnIndexOrThrow("name")));
                 g.put("created_by", c.getString(c.getColumnIndexOrThrow("created_by")));
                 g.put("created_at", c.getString(c.getColumnIndexOrThrow("created_at")));
+                int idxHlc = c.getColumnIndex("updated_hlc");
+                if (idxHlc >= 0) {
+                    g.put("updated_hlc", c.getString(idxHlc));
+                }
 
                 JSONArray members = listMembers(gid);
                 g.put("members", members);
@@ -460,6 +528,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
     public JSONObject getGroup(String groupId) {
         SQLiteDatabase db = getReadableDatabase();
+        ensureGroupColumns(db);
         Cursor c = db.rawQuery("SELECT * FROM groups WHERE id = ?", new String[]{groupId});
         JSONObject obj = null;
         try {
@@ -469,12 +538,35 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 obj.put("name", c.getString(c.getColumnIndexOrThrow("name")));
                 obj.put("created_by", c.getString(c.getColumnIndexOrThrow("created_by")));
                 obj.put("created_at", c.getString(c.getColumnIndexOrThrow("created_at")));
+                int idxHlc = c.getColumnIndex("updated_hlc");
+                if (idxHlc >= 0) {
+                    obj.put("updated_hlc", c.getString(idxHlc));
+                }
             }
         } catch (Exception ignored) {
         } finally {
             c.close();
         }
         return obj;
+    }
+
+    public JSONArray getRecentSyncLogs() {
+        SQLiteDatabase db = getReadableDatabase();
+        ensureActivityTable(db);
+        JSONArray arr = new JSONArray();
+        try (Cursor c = db.rawQuery("SELECT * FROM activity_log ORDER BY timestamp DESC LIMIT 60", null)) {
+            while (c.moveToNext()) {
+                JSONObject obj = new JSONObject();
+                obj.put("id", c.getString(c.getColumnIndexOrThrow("id")));
+                obj.put("type", c.getString(c.getColumnIndexOrThrow("type")));
+                obj.put("icon", c.getString(c.getColumnIndexOrThrow("icon")));
+                obj.put("title", c.getString(c.getColumnIndexOrThrow("title")));
+                obj.put("subtitle", c.getString(c.getColumnIndexOrThrow("subtitle")));
+                obj.put("timestamp", c.getString(c.getColumnIndexOrThrow("timestamp")));
+                arr.put(obj);
+            }
+        } catch (Exception ignored) {}
+        return arr;
     }
 
     public JSONArray listMembers(String groupId) {

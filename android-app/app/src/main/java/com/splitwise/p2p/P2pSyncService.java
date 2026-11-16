@@ -259,6 +259,21 @@ public class P2pSyncService {
         });
     }
 
+    public void broadcastGroupRename(JSONObject packet) {
+        threadPool.execute(() -> {
+            try {
+                String line = packet.toString();
+                synchronized (activeWriters) {
+                    for (PrintWriter w : activeWriters) {
+                        try {
+                            w.println(line);
+                        } catch (Exception ignored) {}
+                    }
+                }
+            } catch (Exception ignored) {}
+        });
+    }
+
     public synchronized void updateDeviceName(String newName) {
         if (newName == null || newName.trim().isEmpty()) return;
         this.deviceName = newName.trim();
@@ -295,6 +310,8 @@ public class P2pSyncService {
                         handleGroupInvite(msg);
                     } else if ("INSTANT_CHAT".equals(type)) {
                         handleInstantChat(msg);
+                    } else if ("GROUP_RENAME".equals(type)) {
+                        handleGroupRename(msg);
                     }
                 } catch (Exception ignored) {}
             }
@@ -304,6 +321,18 @@ public class P2pSyncService {
             if (writer != null) activeWriters.remove(writer);
             try { socket.close(); } catch (Exception ignored) {}
         }
+    }
+
+    private void handleGroupRename(JSONObject msg) {
+        try {
+            String remoteDeviceId = msg.optString("deviceId", "");
+            if (remoteDeviceId.equals(deviceId)) return;
+            String gid = msg.getString("groupId");
+            String newName = msg.getString("name");
+            String updatedHlc = msg.optString("updated_hlc", "");
+            db.upsertGroupInfo(gid, newName, "", "", updatedHlc);
+            mainHandler.post(() -> listener.onDataMerged(1));
+        } catch (Exception ignored) {}
     }
 
     private void handleInstantChat(JSONObject msg) {
@@ -336,6 +365,7 @@ public class P2pSyncService {
                     meta.put("name", gName);
                     meta.put("created_by", g.optString("created_by", ""));
                     meta.put("created_at", g.optString("created_at", ""));
+                    meta.put("updated_hlc", g.optString("updated_hlc", ""));
                     groupMeta.put(gid, meta);
                 }
             }
@@ -380,7 +410,7 @@ public class P2pSyncService {
                     if (meta != null) {
                         String gName = meta.optString("name", "");
                         if (!gName.isEmpty() && !gName.equalsIgnoreCase("(syncing...)")) {
-                            db.upsertGroupInfo(gid, gName, meta.optString("created_by", ""), meta.optString("created_at", ""));
+                            db.upsertGroupInfo(gid, gName, meta.optString("created_by", ""), meta.optString("created_at", ""), meta.optString("updated_hlc", ""));
                             anyUpdated = true;
                         }
                     }
@@ -508,30 +538,34 @@ public class P2pSyncService {
             Iterator<String> keys = groupsObj.keys();
             while (keys.hasNext()) {
                 String gid = keys.next();
-                JSONObject gData = groupsObj.getJSONObject(gid);
+                try {
+                    JSONObject gData = groupsObj.getJSONObject(gid);
 
-                JSONObject info = gData.optJSONObject("info");
-                if (info != null) {
-                    db.upsertGroupInfo(gid, info.getString("name"), info.getString("created_by"), info.getString("created_at"));
-                }
+                    JSONObject info = gData.optJSONObject("info");
+                    if (info != null) {
+                        db.upsertGroupInfo(gid, info.optString("name", ""), info.optString("created_by", ""), info.optString("created_at", ""), info.optString("updated_hlc", ""));
+                    }
 
-                JSONArray members = gData.getJSONArray("members");
-                for (int i = 0; i < members.length(); i++) {
-                    JSONObject m = members.getJSONObject(i);
-                    db.upsertMember(m.optString("id", null), gid, m.getString("name"), m.getString("device_id"), m.optString("joined_at", null));
-                }
+                    JSONArray members = gData.optJSONArray("members");
+                    if (members != null) {
+                        for (int i = 0; i < members.length(); i++) {
+                            JSONObject m = members.getJSONObject(i);
+                            db.upsertMember(m.optString("id", null), gid, m.getString("name"), m.getString("device_id"), m.optString("joined_at", null));
+                        }
+                    }
 
-                JSONArray expenses = gData.optJSONArray("expenses");
-                if (expenses != null && expenses.length() > 0) {
-                    totalMerged += db.mergeExpensesBatch(hlcClock, gid, expenses);
-                }
+                    JSONArray expenses = gData.optJSONArray("expenses");
+                    if (expenses != null && expenses.length() > 0) {
+                        totalMerged += db.mergeExpensesBatch(hlcClock, gid, expenses);
+                    }
 
-                JSONArray messages = gData.optJSONArray("messages");
-                if (messages != null && messages.length() > 0) {
-                    totalMerged += db.mergeMessagesBatch(hlcClock, gid, messages);
-                }
+                    JSONArray messages = gData.optJSONArray("messages");
+                    if (messages != null && messages.length() > 0) {
+                        totalMerged += db.mergeMessagesBatch(hlcClock, gid, messages);
+                    }
 
-                db.updateCheckpoint(gid, remoteDeviceId, hlcClock.tick());
+                    db.updateCheckpoint(gid, remoteDeviceId, hlcClock.tick());
+                } catch (Exception ignored) {}
             }
 
             final int count = totalMerged;

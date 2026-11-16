@@ -203,16 +203,22 @@
 
       <div class="group-header-card">
         <div class="group-title-row">
-          <h2 class="section-title" id="detail-group-name">Group Name</h2>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <h2 class="section-title" id="detail-group-name" style="margin-bottom: 0;">Group Name</h2>
+            <button class="btn-icon-tiny" id="btn-rename-title-pencil" onclick="openRenameGroupModal()" title="Rename this group" style="background: none; border: none; cursor: pointer; font-size: 0.95rem; color: var(--text-muted); padding: 4px;">✏️</button>
+          </div>
           <span class="group-id-badge" id="detail-group-id" title="Tap to copy Group ID">ID: ...</span>
         </div>
         <div class="hero-subtitle" id="detail-group-meta">0 members • Total spend: ₹0.00</div>
         <div class="hero-balance zero" id="detail-group-balance" style="font-size: 1.5rem; margin-top: 10px;">₹0.00</div>
 
-        <!-- Group Quick Actions: QR, Import, Export -->
+        <!-- Group Quick Actions: Rename, QR, Import, Export -->
         <div class="group-action-row">
+          <button class="btn-action-pill" id="btn-rename-group" onclick="openRenameGroupModal()" style="color: var(--primary); border-color: rgba(16, 185, 129, 0.4);">
+            <span>✏️ Rename</span>
+          </button>
           <button class="btn-action-pill" id="btn-show-group-qr" onclick="openModal('modal-group-qr')" style="color: var(--cyan); border-color: var(--cyan);">
-            <span>📱 Show QR Code</span>
+            <span>📱 Show QR</span>
           </button>
           <button class="btn-action-pill" id="btn-import-csv-detail" onclick="openModal('modal-import-csv')">
             <span>📥 Import CSV</span>
@@ -221,7 +227,7 @@
             <span>📤 Export CSV</span>
           </button>
           <button class="btn-action-pill" id="btn-delete-group" style="color: var(--danger); border-color: rgba(239, 68, 68, 0.4);">
-            <span>🗑️ Delete Group</span>
+            <span>🗑️ Delete</span>
           </button>
         </div>
       </div>
@@ -500,7 +506,7 @@
               </div>
               <div>
                 <div style="font-weight: 700; font-size: 1rem;">Splitwise P2P Native</div>
-                <div style="font-size: 0.78rem; color: var(--text-dim);" id="app-version-label">v1.3.1 • FLAMEPOSEIDON/splitwise-p2p</div>
+                <div style="font-size: 0.78rem; color: var(--text-dim);" id="app-version-label">v1.3.2 • FLAMEPOSEIDON/splitwise-p2p</div>
               </div>
             </div>
             <button class="btn btn-secondary btn-sm" id="btn-check-updates" onclick="checkForUpdates(true)">
@@ -918,6 +924,14 @@
           </div>
         </button>
 
+        <button type="button" class="sheet-action-item" id="btn-sheet-rename">
+          <span class="sheet-action-icon">✏️</span>
+          <div class="sheet-action-text">
+            <div class="sheet-action-label">Rename Group</div>
+            <div class="sheet-action-sub">Change group name and sync with all members</div>
+          </div>
+        </button>
+
         <button type="button" class="sheet-action-item" id="btn-sheet-chat">
           <span class="sheet-action-icon">💬</span>
           <div class="sheet-action-text">
@@ -942,6 +956,26 @@
           </div>
         </button>
       </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Rename Group -->
+  <div class="modal-overlay" id="modal-rename-group">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">Rename Group</h3>
+        <button class="btn-close" data-close="modal-rename-group">&times;</button>
+      </div>
+      <form id="form-rename-group">
+        <div class="form-group">
+          <label class="form-label">New Group Name</label>
+          <input type="text" class="form-input" id="input-rename-group-name" placeholder="e.g. Flat Expenses, Goa Trip" required autocomplete="off">
+        </div>
+        <p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 14px; line-height: 1.4;">
+          ⚡ The updated name will instantly sync to all group members across Wi-Fi & Quick Share mesh!
+        </p>
+        <button type="submit" class="btn btn-primary btn-block">Update & Sync with All Members</button>
+      </form>
     </div>
   </div>
 
@@ -981,8 +1015,9 @@
           <div id="info-modal-members-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
         </div>
       </div>
-      <div style="display: flex; gap: 10px; margin-top: 18px;">
-        <button type="button" class="btn btn-secondary btn-block" id="btn-info-modal-copy-id">📋 Copy Group ID</button>
+      <div style="display: flex; gap: 8px; margin-top: 18px;">
+        <button type="button" class="btn btn-secondary btn-block" id="btn-info-modal-copy-id">📋 Copy ID</button>
+        <button type="button" class="btn btn-secondary btn-block" id="btn-info-modal-rename" onclick="openRenameGroupModal(currentActionGroupId || state.activeGroupId)" style="color: var(--primary);">✏️ Rename</button>
         <button type="button" class="btn btn-primary btn-block" data-close="modal-group-info">Done</button>
       </div>
     </div>

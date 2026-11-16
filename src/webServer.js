@@ -316,6 +316,21 @@ class WebServer {
       return;
     }
 
+    // PUT /api/groups/:id (Rename group)
+    if (groupDetailMatch && req.method === 'PUT') {
+      const groupId = groupDetailMatch[1];
+      parseBody((err, body) => {
+        if (err || !body.name || !body.name.trim()) {
+          sendJson(400, { error: 'Group name is required' });
+          return;
+        }
+        const updated = expenses.renameGroup(groupId, body.name.trim());
+        this.broadcastUpdate('GROUP_RENAMED', { groupId, name: body.name.trim() });
+        sendJson(200, { success: true, group: updated });
+      });
+      return;
+    }
+
     // DELETE /api/groups/:id (Delete group and all its data)
     if (groupDetailMatch && req.method === 'DELETE') {
       const groupId = groupDetailMatch[1];

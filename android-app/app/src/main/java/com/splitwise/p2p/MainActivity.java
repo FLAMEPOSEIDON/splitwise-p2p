@@ -572,6 +572,40 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         }
 
         @JavascriptInterface
+        public String renameGroup(String groupId, String newName) {
+            try {
+                if (groupId == null || newName == null || newName.trim().isEmpty()) {
+                    return "{\"success\": false, \"error\": \"Name cannot be empty\"}";
+                }
+                JSONObject res = dbHelper.renameGroup(hlcClock, groupId, newName.trim());
+                JSONObject packet = new JSONObject();
+                packet.put("type", "GROUP_RENAME");
+                packet.put("deviceId", deviceId);
+                packet.put("groupId", groupId);
+                packet.put("name", newName.trim());
+                packet.put("updated_hlc", res.optString("updated_hlc", hlcClock.tick()));
+
+                if (syncService != null) {
+                    syncService.broadcastGroupRename(packet);
+                    syncService.broadcastSync();
+                }
+                if (nearbySyncService != null) {
+                    nearbySyncService.broadcastGroupRename(packet);
+                    nearbySyncService.broadcastSync();
+                }
+                notifyWebView("DATA_MERGED");
+                return res.toString();
+            } catch (Exception e) {
+                return "{\"success\": false, \"error\": \"" + e.getMessage() + "\"}";
+            }
+        }
+
+        @JavascriptInterface
+        public String getAppLogs() {
+            return dbHelper.getRecentSyncLogs().toString();
+        }
+
+        @JavascriptInterface
         public void deleteGroup(String groupId) {
             dbHelper.deleteGroup(groupId);
             if (syncService != null) syncService.broadcastSync();
@@ -908,7 +942,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                 android.content.pm.PackageInfo pInfo = getPackageManager().getPackageInfo(getPackageName(), 0);
                 return pInfo.versionName;
             } catch (Exception e) {
-                return "1.3.1";
+                return "1.3.2";
             }
         }
 
