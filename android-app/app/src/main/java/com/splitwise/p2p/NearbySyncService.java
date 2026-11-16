@@ -279,6 +279,17 @@ public class NearbySyncService {
     public void broadcastSync() {
         for (String endpointId : connectedEndpoints.keySet()) {
             sendHello(endpointId);
+            try {
+                JSONArray myGroups = db.listGroups(deviceId);
+                List<String> gids = new ArrayList<>();
+                for (int i = 0; i < myGroups.length(); i++) {
+                    gids.add(myGroups.getJSONObject(i).getString("id"));
+                }
+                if (!gids.isEmpty()) {
+                    sendSyncDataForGroups(endpointId, gids);
+                }
+            } catch (Exception ignored) {}
+
             String peerDevId = endpointToDeviceId.get(endpointId);
             if (peerDevId != null && !peerDevId.isEmpty()) {
                 try {
@@ -291,6 +302,21 @@ public class NearbySyncService {
                     sendPayload(endpointId, dmHeader);
                 } catch (Exception ignored) {}
             }
+        }
+    }
+
+    public void broadcastChatMessage(String groupId, JSONObject msg) {
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("type", "INSTANT_CHAT");
+            payload.put("deviceId", deviceId);
+            payload.put("groupId", groupId);
+            payload.put("message", msg);
+            for (String endpointId : connectedEndpoints.keySet()) {
+                sendPayload(endpointId, payload);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error broadcasting instant chat nearby", e);
         }
     }
 
@@ -307,8 +333,19 @@ public class NearbySyncService {
         try {
             JSONArray groups = db.listGroups(deviceId);
             JSONArray groupIds = new JSONArray();
+            JSONObject groupMeta = new JSONObject();
             for (int i = 0; i < groups.length(); i++) {
-                groupIds.put(groups.getJSONObject(i).getString("id"));
+                JSONObject g = groups.getJSONObject(i);
+                String gid = g.getString("id");
+                groupIds.put(gid);
+                String gName = g.optString("name", "");
+                if (!gName.isEmpty() && !gName.equalsIgnoreCase("(syncing...)")) {
+                    JSONObject meta = new JSONObject();
+                    meta.put("name", gName);
+                    meta.put("created_by", g.optString("created_by", ""));
+                    meta.put("created_at", g.optString("created_at", ""));
+                    groupMeta.put(gid, meta);
+                }
             }
 
             JSONObject hello = new JSONObject();
@@ -316,6 +353,7 @@ public class NearbySyncService {
             hello.put("deviceId", deviceId);
             hello.put("deviceName", deviceName);
             hello.put("groups", groupIds);
+            hello.put("groupMeta", groupMeta);
 
             sendPayload(endpointId, hello);
         } catch (Exception e) {
@@ -340,9 +378,28 @@ public class NearbySyncService {
                 handleSyncChunk(msg);
             } else if ("GROUP_INVITE".equals(type)) {
                 handleGroupInvite(msg);
+            } else if ("INSTANT_CHAT".equals(type)) {
+                handleInstantChat(msg);
             }
         } catch (Exception e) {
             Log.e(TAG, "Error parsing nearby message", e);
+        }
+    }
+
+    private void handleInstantChat(JSONObject msg) {
+        try {
+            String remoteDeviceId = msg.optString("deviceId", "");
+            if (remoteDeviceId.equals(deviceId)) return;
+            String gid = msg.getString("groupId");
+            JSONObject chatMsg = msg.getJSONObject("message");
+            JSONArray arr = new JSONArray();
+            arr.put(chatMsg);
+            int count = db.mergeMessagesBatch(hlcClock, gid, arr);
+            if (count > 0) {
+                mainHandler.post(() -> listener.onDataMerged(count));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling instant chat", e);
         }
     }
 
@@ -358,6 +415,26 @@ public class NearbySyncService {
                 connectedEndpoints.put(endpointId, remoteName.trim());
                 db.updateMemberNameForDevice(remoteDeviceId, remoteName.trim());
                 mainHandler.post(() -> listener.onPeerConnected(endpointId, remoteName.trim()));
+            }
+
+            JSONObject groupMeta = msg.optJSONObject("groupMeta");
+            if (groupMeta != null) {
+                Iterator<String> gKeys = groupMeta.keys();
+                boolean anyUpdated = false;
+                while (gKeys.hasNext()) {
+                    String gid = gKeys.next();
+                    JSONObject meta = groupMeta.optJSONObject(gid);
+                    if (meta != null) {
+                        String gName = meta.optString("name", "");
+                        if (!gName.isEmpty() && !gName.equalsIgnoreCase("(syncing...)")) {
+                            db.upsertGroupInfo(gid, gName, meta.optString("created_by", ""), meta.optString("created_at", ""));
+                            anyUpdated = true;
+                        }
+                    }
+                }
+                if (anyUpdated) {
+                    mainHandler.post(() -> listener.onDataMerged(1));
+                }
             }
 
             JSONArray remoteGroups = msg.getJSONArray("groups");

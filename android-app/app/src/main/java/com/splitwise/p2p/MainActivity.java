@@ -49,7 +49,10 @@ import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 
 public class MainActivity extends Activity implements P2pSyncService.OnSyncListener, NearbySyncService.OnNearbySyncListener {
@@ -639,23 +642,72 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
 
         @JavascriptInterface
         public String getPeers() {
-            List<P2pSyncService.PeerInfo> list = syncService.getDiscoveredPeers();
-            JSONArray arr = new JSONArray();
-            for (P2pSyncService.PeerInfo p : list) {
-                try {
-                    JSONObject obj = new JSONObject();
-                    obj.put("name", p.name);
-                    obj.put("host", p.host);
-                    obj.put("port", p.port);
-                    obj.put("deviceId", p.deviceId != null ? p.deviceId : "");
-                    obj.put("type", "Local Wi-Fi Mesh");
-                    arr.put(obj);
-                } catch (Exception ignored) {}
-            }
-            if (nearbySyncService != null) {
-                for (JSONObject p : nearbySyncService.getNearbyPeers()) {
-                    arr.put(p);
+            Map<String, JSONObject> peerMap = new LinkedHashMap<>();
+
+            // 1. Wi-Fi Mesh Peers
+            if (syncService != null) {
+                for (P2pSyncService.PeerInfo p : syncService.getDiscoveredPeers()) {
+                    try {
+                        JSONObject obj = new JSONObject();
+                        String dName = (p.name != null && !p.name.trim().isEmpty()) ? p.name.trim() : "Nearby Peer";
+                        String devId = (p.deviceId != null) ? p.deviceId.trim() : "";
+                        obj.put("name", dName);
+                        obj.put("host", p.host != null ? p.host : "");
+                        obj.put("port", p.port);
+                        obj.put("deviceId", devId);
+                        obj.put("type", "Local Wi-Fi Mesh");
+                        obj.put("isWifi", true);
+                        obj.put("connected", true);
+
+                        String key = !devId.isEmpty() ? ("dev:" + devId) : ("name:" + dName.toLowerCase(Locale.ROOT));
+                        peerMap.put(key, obj);
+                    } catch (Exception ignored) {}
                 }
+            }
+
+            // 2. Quick Share (Nearby Connections) Peers
+            if (nearbySyncService != null) {
+                for (JSONObject np : nearbySyncService.getNearbyPeers()) {
+                    try {
+                        String devId = np.optString("deviceId", "").trim();
+                        String name = np.optString("name", "Nearby Peer").trim();
+                        String key = !devId.isEmpty() ? ("dev:" + devId) : ("name:" + name.toLowerCase(Locale.ROOT));
+
+                        JSONObject existing = peerMap.get(key);
+                        if (existing == null && !name.isEmpty()) {
+                            // Secondary check: match by case-insensitive name if deviceId key didn't hit
+                            for (JSONObject candidate : peerMap.values()) {
+                                if (candidate.optString("name", "").equalsIgnoreCase(name)) {
+                                    existing = candidate;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (existing != null) {
+                            // Merge into a single Dual Mesh peer!
+                            existing.put("type", "Dual Mesh (Wi-Fi + BLE)");
+                            existing.put("isDual", true);
+                            existing.put("isNearby", true);
+                            existing.put("connected", true);
+                            if (existing.optString("deviceId", "").isEmpty() && !devId.isEmpty()) {
+                                existing.put("deviceId", devId);
+                            }
+                            if (np.has("id")) {
+                                existing.put("nearbyEndpointId", np.getString("id"));
+                            }
+                        } else {
+                            // Pure Nearby peer
+                            np.put("isNearby", true);
+                            peerMap.put(key, np);
+                        }
+                    } catch (Exception ignored) {}
+                }
+            }
+
+            JSONArray arr = new JSONArray();
+            for (JSONObject p : peerMap.values()) {
+                arr.put(p);
             }
             return arr.toString();
         }
@@ -669,8 +721,14 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         public String sendMessage(String groupId, String text) {
             try {
                 JSONObject msg = dbHelper.addMessage(hlcClock, groupId, deviceId, deviceName, text);
-                if (syncService != null) syncService.broadcastSync();
-                if (nearbySyncService != null) nearbySyncService.broadcastSync();
+                if (syncService != null) {
+                    syncService.broadcastChatMessage(groupId, msg);
+                    syncService.broadcastSync();
+                }
+                if (nearbySyncService != null) {
+                    nearbySyncService.broadcastChatMessage(groupId, msg);
+                    nearbySyncService.broadcastSync();
+                }
                 return msg.toString();
             } catch (Exception e) {
                 return "{}";
@@ -847,7 +905,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                 android.content.pm.PackageInfo pInfo = getPackageManager().getPackageInfo(getPackageName(), 0);
                 return pInfo.versionName;
             } catch (Exception e) {
-                return "1.3.0";
+                return "1.3.1";
             }
         }
 

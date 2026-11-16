@@ -340,7 +340,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         String currentName = exists ? c.getString(1) : null;
         c.close();
 
-        String actualName = (groupName != null && !groupName.trim().isEmpty() && !groupName.equals("(syncing...)"))
+        String actualName = (groupName != null && !groupName.trim().isEmpty() && !groupName.trim().equalsIgnoreCase("(syncing...)"))
                 ? groupName.trim() : (exists && currentName != null ? currentName : "(syncing...)");
 
         if (!exists) {
@@ -350,7 +350,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             cv.put("created_by", deviceId);
             cv.put("created_at", nowIso());
             db.insert("groups", null, cv);
-        } else if (currentName != null && currentName.equals("(syncing...)") && !actualName.equals("(syncing...)")) {
+        } else if (currentName != null && currentName.trim().equalsIgnoreCase("(syncing...)") && !actualName.equalsIgnoreCase("(syncing...)")) {
             ContentValues cv = new ContentValues();
             cv.put("name", actualName);
             db.update("groups", cv, "id = ?", new String[]{groupId});
@@ -372,12 +372,35 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     }
 
     public void upsertGroupInfo(String groupId, String name, String createdBy, String createdAt) {
+        if (groupId == null || groupId.trim().isEmpty()) return;
         SQLiteDatabase db = getWritableDatabase();
+        Cursor c = db.rawQuery("SELECT name, created_by, created_at FROM groups WHERE id = ?", new String[]{groupId});
+        boolean exists = c.moveToFirst();
+        String currentName = exists ? c.getString(0) : null;
+        String currentCreatedBy = exists ? c.getString(1) : null;
+        String currentCreatedAt = exists ? c.getString(2) : null;
+        c.close();
+
+        boolean isIncomingValid = name != null && !name.trim().isEmpty() && !name.trim().equalsIgnoreCase("(syncing...)");
+        boolean isCurrentValid = exists && currentName != null && !currentName.trim().isEmpty() && !currentName.trim().equalsIgnoreCase("(syncing...)");
+
+        String finalName;
+        if (isIncomingValid) {
+            finalName = name.trim();
+        } else if (isCurrentValid) {
+            finalName = currentName.trim();
+        } else {
+            finalName = "(syncing...)";
+        }
+
+        String finalCreatedBy = (createdBy != null && !createdBy.isEmpty()) ? createdBy : (currentCreatedBy != null ? currentCreatedBy : "");
+        String finalCreatedAt = (createdAt != null && !createdAt.isEmpty()) ? createdAt : (currentCreatedAt != null ? currentCreatedAt : nowIso());
+
         ContentValues cv = new ContentValues();
         cv.put("id", groupId);
-        cv.put("name", name);
-        cv.put("created_by", createdBy);
-        cv.put("created_at", createdAt);
+        cv.put("name", finalName);
+        cv.put("created_by", finalCreatedBy);
+        cv.put("created_at", finalCreatedAt);
         db.insertWithOnConflict("groups", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
     }
 

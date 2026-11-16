@@ -41,6 +41,7 @@ public class P2pSyncService {
     private DatagramSocket udpSocket;
     private final ExecutorService threadPool = Executors.newCachedThreadPool();
     private final Set<String> connectedPeers = Collections.synchronizedSet(new HashSet<>());
+    private final Set<String> activePeerHosts = Collections.synchronizedSet(new HashSet<>());
     private final Map<String, PeerInfo> discoveredPeers = new ConcurrentHashMap<>();
     private final Set<PrintWriter> activeWriters = Collections.synchronizedSet(new HashSet<>());
     private final Queue<NsdServiceInfo> resolveQueue = new ConcurrentLinkedQueue<>();
@@ -181,7 +182,7 @@ public class P2pSyncService {
                 serverSocket = new ServerSocket(SYNC_PORT);
                 while (running) {
                     Socket socket = serverSocket.accept();
-                    threadPool.execute(() -> handleConnection(socket, false));
+                    threadPool.execute(() -> handleConnection(socket, false, null));
                 }
             } catch (Exception e) {
                 if (running) {
@@ -194,12 +195,18 @@ public class P2pSyncService {
     }
 
     public void connectToPeer(String host, int port) {
+        String key = host + ":" + port;
+        if (!activePeerHosts.add(key)) {
+            return;
+        }
         threadPool.execute(() -> {
             try {
                 Socket socket = new Socket();
                 socket.connect(new InetSocketAddress(host, port), 5000);
-                handleConnection(socket, true);
-            } catch (Exception ignored) {}
+                handleConnection(socket, true, key);
+            } catch (Exception e) {
+                activePeerHosts.remove(key);
+            }
         });
     }
 
@@ -208,6 +215,7 @@ public class P2pSyncService {
             synchronized (activeWriters) {
                 for (PrintWriter w : activeWriters) {
                     try {
+                        sendAllSyncData(w);
                         sendHello(w);
                     } catch (Exception ignored) {}
                 }
@@ -215,6 +223,39 @@ public class P2pSyncService {
             for (PeerInfo p : discoveredPeers.values()) {
                 connectToPeer(p.host, p.port);
             }
+        });
+    }
+
+    private void sendAllSyncData(PrintWriter writer) {
+        try {
+            JSONArray myGroups = db.listGroups(deviceId);
+            List<String> gids = new ArrayList<>();
+            for (int i = 0; i < myGroups.length(); i++) {
+                gids.add(myGroups.getJSONObject(i).getString("id"));
+            }
+            if (!gids.isEmpty()) {
+                sendSyncDataForGroups(writer, gids);
+            }
+        } catch (Exception ignored) {}
+    }
+
+    public void broadcastChatMessage(String groupId, JSONObject msg) {
+        threadPool.execute(() -> {
+            try {
+                JSONObject payload = new JSONObject();
+                payload.put("type", "INSTANT_CHAT");
+                payload.put("deviceId", deviceId);
+                payload.put("groupId", groupId);
+                payload.put("message", msg);
+                String line = payload.toString();
+                synchronized (activeWriters) {
+                    for (PrintWriter w : activeWriters) {
+                        try {
+                            w.println(line);
+                        } catch (Exception ignored) {}
+                    }
+                }
+            } catch (Exception ignored) {}
         });
     }
 
@@ -228,7 +269,7 @@ public class P2pSyncService {
         }
     }
 
-    private void handleConnection(Socket socket, boolean isInitiator) {
+    private void handleConnection(Socket socket, boolean isInitiator, String hostKey) {
         PrintWriter writer = null;
         try {
             BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
@@ -252,22 +293,51 @@ public class P2pSyncService {
                         handleSyncData(msg);
                     } else if ("GROUP_INVITE".equals(type)) {
                         handleGroupInvite(msg);
+                    } else if ("INSTANT_CHAT".equals(type)) {
+                        handleInstantChat(msg);
                     }
                 } catch (Exception ignored) {}
             }
         } catch (Exception ignored) {
         } finally {
+            if (hostKey != null) activePeerHosts.remove(hostKey);
             if (writer != null) activeWriters.remove(writer);
             try { socket.close(); } catch (Exception ignored) {}
         }
+    }
+
+    private void handleInstantChat(JSONObject msg) {
+        try {
+            String remoteDeviceId = msg.optString("deviceId", "");
+            if (remoteDeviceId.equals(deviceId)) return;
+            String gid = msg.getString("groupId");
+            JSONObject chatMsg = msg.getJSONObject("message");
+            JSONArray arr = new JSONArray();
+            arr.put(chatMsg);
+            int count = db.mergeMessagesBatch(hlcClock, gid, arr);
+            if (count > 0) {
+                mainHandler.post(() -> listener.onDataMerged(count));
+            }
+        } catch (Exception ignored) {}
     }
 
     private void sendHello(PrintWriter writer) {
         try {
             JSONArray groups = db.listGroups(deviceId);
             JSONArray groupIds = new JSONArray();
+            JSONObject groupMeta = new JSONObject();
             for (int i = 0; i < groups.length(); i++) {
-                groupIds.put(groups.getJSONObject(i).getString("id"));
+                JSONObject g = groups.getJSONObject(i);
+                String gid = g.getString("id");
+                groupIds.put(gid);
+                String gName = g.optString("name", "");
+                if (!gName.isEmpty() && !gName.equalsIgnoreCase("(syncing...)")) {
+                    JSONObject meta = new JSONObject();
+                    meta.put("name", gName);
+                    meta.put("created_by", g.optString("created_by", ""));
+                    meta.put("created_at", g.optString("created_at", ""));
+                    groupMeta.put(gid, meta);
+                }
             }
 
             JSONObject hello = new JSONObject();
@@ -275,6 +345,7 @@ public class P2pSyncService {
             hello.put("deviceId", deviceId);
             hello.put("deviceName", deviceName);
             hello.put("groups", groupIds);
+            hello.put("groupMeta", groupMeta);
             writer.println(hello.toString());
         } catch (Exception ignored) {}
     }
@@ -296,6 +367,26 @@ public class P2pSyncService {
                     if (remoteName != null && !remoteName.trim().isEmpty()) {
                         p.name = remoteName.trim();
                     }
+                }
+            }
+
+            JSONObject groupMeta = msg.optJSONObject("groupMeta");
+            if (groupMeta != null) {
+                Iterator<String> gKeys = groupMeta.keys();
+                boolean anyUpdated = false;
+                while (gKeys.hasNext()) {
+                    String gid = gKeys.next();
+                    JSONObject meta = groupMeta.optJSONObject(gid);
+                    if (meta != null) {
+                        String gName = meta.optString("name", "");
+                        if (!gName.isEmpty() && !gName.equalsIgnoreCase("(syncing...)")) {
+                            db.upsertGroupInfo(gid, gName, meta.optString("created_by", ""), meta.optString("created_at", ""));
+                            anyUpdated = true;
+                        }
+                    }
+                }
+                if (anyUpdated) {
+                    mainHandler.post(() -> listener.onDataMerged(1));
                 }
             }
 

@@ -444,6 +444,24 @@ function triggerManualSync() {
 }
 window.triggerManualSync = triggerManualSync;
 
+let chatLivePollTimer = null;
+
+function startChatLivePolling() {
+  stopChatLivePolling();
+  chatLivePollTimer = setInterval(() => {
+    if (state.activeView === 'view-chat' && state.activeChatConversationId) {
+      loadMessages(state.activeChatConversationId);
+    }
+  }, 1500);
+}
+
+function stopChatLivePolling() {
+  if (chatLivePollTimer) {
+    clearInterval(chatLivePollTimer);
+    chatLivePollTimer = null;
+  }
+}
+
 function switchView(viewId, isBack = false) {
   let targetSubTab = null;
   if (viewId === 'view-network') {
@@ -483,6 +501,9 @@ function switchView(viewId, isBack = false) {
 
   if (viewId === 'view-chat') {
     initChatView();
+    startChatLivePolling();
+  } else {
+    stopChatLivePolling();
   }
 
   if (viewId === 'view-activity') {
@@ -517,6 +538,9 @@ if (isNativeApp) {
       }
       if (state.activeChatConversationId) {
         loadMessages(state.activeChatConversationId);
+      }
+      if (state.activeView === 'view-chat') {
+        renderChatConversationChips(state.activeChatConversationId);
       }
       if (state.activeView === 'view-activity') {
         loadActivityFeed();
@@ -858,12 +882,36 @@ function renderInfo() {
 
 function renderPeers(peers) {
   const countBadge = document.getElementById('mesh-peer-count');
+
+  // Deduplicate peers by deviceId, or fallback to case-insensitive name
+  const uniquePeers = [];
+  const seenMap = new Map();
+
+  for (const p of (peers || [])) {
+    const rawDevId = (p.deviceId || '').trim();
+    const rawName = (p.name || '').trim().toLowerCase();
+    const key = rawDevId ? ('dev:' + rawDevId) : ('name:' + rawName);
+
+    if (seenMap.has(key)) {
+      const existing = seenMap.get(key);
+      existing.isDual = true;
+      existing.type = 'Dual Mesh (Wi-Fi + BLE)';
+      if (!existing.host && p.host) existing.host = p.host;
+      if (!existing.deviceId && p.deviceId) existing.deviceId = p.deviceId;
+      if (p.connected) existing.connected = true;
+    } else {
+      const copy = { ...p };
+      seenMap.set(key, copy);
+      uniquePeers.push(copy);
+    }
+  }
+
   if (countBadge) {
-    countBadge.textContent = (peers && peers.length) || 0;
+    countBadge.textContent = uniquePeers.length;
   }
   if (!el.peersListContainer) return;
 
-  if (!peers || peers.length === 0) {
+  if (uniquePeers.length === 0) {
     el.peersListContainer.innerHTML = `
       <div class="mesh-empty-state">
         <div class="mesh-radar-icon">📡</div>
@@ -880,26 +928,37 @@ function renderPeers(peers) {
     return;
   }
 
-  el.peersListContainer.innerHTML = peers
+  el.peersListContainer.innerHTML = uniquePeers
     .map((p) => {
       const displayName = p.name || 'Nearby Peer';
       const initial = (displayName.replace(/^Android User /i, '')[0] || '📱').toUpperCase();
       const isConnected = p.connected !== false;
-      const isWifi = (p.type && p.type.toLowerCase().includes('wi-fi')) || p.host;
-      const techLabel = isWifi ? 'Wi-Fi' : 'Quick Share';
+      const isDual = p.isDual || (p.type && p.type.toLowerCase().includes('dual'));
+      const isWifi = !isDual && ((p.type && p.type.toLowerCase().includes('wi-fi')) || p.host);
+
+      let techBadgeClass = 'nearby';
+      let techLabel = '⚡ Quick Share';
+      if (isDual) {
+        techBadgeClass = 'dual';
+        techLabel = '⚡ Dual Mesh';
+      } else if (isWifi) {
+        techBadgeClass = 'wifi';
+        techLabel = '📶 Wi-Fi';
+      }
+
       const subInfo = p.host ? p.host : (p.deviceId ? `ID: ${p.deviceId.slice(0, 8)}` : 'Mesh Peer');
 
       return `
     <div class="mesh-peer-item">
       <div class="peer-avatar-wrapper">
-        <div class="peer-avatar">${escapeHtml(initial)}</div>
+        <div class="peer-avatar ${isDual ? 'dual' : ''}">${escapeHtml(initial)}</div>
         <div class="peer-online-dot ${isConnected ? '' : 'syncing'}" title="${isConnected ? 'Connected' : 'Discovered'}"></div>
       </div>
       <div class="peer-info-col">
         <div class="peer-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</div>
         <div class="peer-meta">
-          <span class="peer-tech-badge ${isWifi ? 'wifi' : ''}">${escapeHtml(techLabel)}</span>
-          <span style="font-family: monospace; font-size: 0.7rem;">${escapeHtml(subInfo)}</span>
+          <span class="peer-tech-badge ${techBadgeClass}">${escapeHtml(techLabel)}</span>
+          <span style="font-family: monospace; font-size: 0.7rem; color: var(--text-dim);">${escapeHtml(subInfo)}</span>
         </div>
       </div>
       <div class="peer-actions-col">
