@@ -141,12 +141,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public String getMemberName(String memberId) {
         if (memberId == null) return "Someone";
         SQLiteDatabase db = getReadableDatabase();
-        Cursor c = db.rawQuery("SELECT name FROM members WHERE id = ?", new String[]{memberId});
         String name = "Someone";
-        if (c.moveToFirst()) {
-            name = c.getString(0);
-        }
-        c.close();
+        try (Cursor c = db.rawQuery("SELECT name FROM members WHERE id = ?", new String[]{memberId})) {
+            if (c.moveToFirst()) {
+                name = c.getString(0);
+            }
+        } catch (Exception ignored) {}
         return name;
     }
 
@@ -160,12 +160,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         if (groupId == null) return "Unknown Group";
         if (groupId.startsWith("dm_")) return "Direct Chat";
         SQLiteDatabase db = getReadableDatabase();
-        Cursor c = db.rawQuery("SELECT name FROM groups WHERE id = ?", new String[]{groupId});
         String name = "Unknown Group";
-        if (c.moveToFirst()) {
-            name = c.getString(0);
-        }
-        c.close();
+        try (Cursor c = db.rawQuery("SELECT name FROM groups WHERE id = ?", new String[]{groupId})) {
+            if (c.moveToFirst()) {
+                name = c.getString(0);
+            }
+        } catch (Exception ignored) {}
         return name;
     }
 
@@ -748,18 +748,20 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         while (i < debtors.size() && j < creditors.size()) {
             Debtor d = debtors.get(i);
             Creditor c = creditors.get(j);
-            double settled = Math.min(d.amount, c.amount);
+            double settled = Math.round(Math.min(d.amount, c.amount) * 100.0) / 100.0;
 
-            try {
-                JSONObject s = new JSONObject();
-                s.put("from", d.id);
-                s.put("to", c.id);
-                s.put("amount", Math.round(settled * 100.0) / 100.0);
-                settlements.put(s);
-            } catch (Exception ignored) {}
+            if (settled >= 0.01) {
+                try {
+                    JSONObject s = new JSONObject();
+                    s.put("from", d.id);
+                    s.put("to", c.id);
+                    s.put("amount", settled);
+                    settlements.put(s);
+                } catch (Exception ignored) {}
+            }
 
-            d.amount -= settled;
-            c.amount -= settled;
+            d.amount = Math.round((d.amount - settled) * 100.0) / 100.0;
+            c.amount = Math.round((c.amount - settled) * 100.0) / 100.0;
 
             if (d.amount < 0.01) i++;
             if (c.amount < 0.01) j++;
@@ -830,98 +832,105 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 memberMap.put(name, getOrCreateMember(targetGroupId, name, deviceId));
             }
 
+            SQLiteDatabase db = getWritableDatabase();
             int count = 0;
-            for (int i = 1; i < lines.length; i++) {
-                String line = lines[i].trim();
-                if (line.isEmpty()) continue;
-                List<String> row = parseCsvLine(line);
-                if (row.size() < 6) continue;
+            db.beginTransaction();
+            try {
+                for (int i = 1; i < lines.length; i++) {
+                    String line = lines[i].trim();
+                    if (line.isEmpty()) continue;
+                    List<String> row = parseCsvLine(line);
+                    if (row.size() < 6) continue;
 
-                String date = row.get(0);
-                String desc = row.get(1);
-                String cat = row.get(2).isEmpty() ? "General" : row.get(2);
-                String costStr = row.get(3);
-                double cost;
-                try {
-                    cost = Double.parseDouble(costStr);
-                } catch (Exception e) {
-                    continue;
-                }
-
-                if (desc.toLowerCase().contains("total balance") || cost <= 0) continue;
-
-                Map<String, Double> memberVals = new HashMap<>();
-                for (int m = 0; m < memberNames.size(); m++) {
-                    double v = 0.0;
-                    if (5 + m < row.size()) {
-                        try { v = Double.parseDouble(row.get(5 + m)); } catch (Exception ignored) {}
-                    }
-                    memberVals.put(memberNames.get(m), v);
-                }
-
-                if ("payment".equalsIgnoreCase(cat) || desc.toLowerCase().contains(" paid ")) {
-                    String payer = null, receiver = null;
-                    for (Map.Entry<String, Double> e : memberVals.entrySet()) {
-                        if (e.getValue() > 0) payer = e.getKey();
-                        if (e.getValue() < 0) receiver = e.getKey();
-                    }
-                    if (payer != null && receiver != null && memberMap.containsKey(payer) && memberMap.containsKey(receiver)) {
-                        JSONArray split = new JSONArray();
-                        split.put(memberMap.get(receiver).getString("id"));
-                        addExpense(clock, targetGroupId, desc, cost, memberMap.get(payer).getString("id"), split, "Payment", date, deviceId);
-                        count++;
+                    String date = row.get(0);
+                    String desc = row.get(1);
+                    String cat = row.get(2).isEmpty() ? "General" : row.get(2);
+                    String costStr = row.get(3);
+                    double cost;
+                    try {
+                        cost = Double.parseDouble(costStr);
+                    } catch (Exception e) {
                         continue;
                     }
-                }
 
-                List<String> positivePayers = new ArrayList<>();
-                List<Map.Entry<String, Double>> negativeMembers = new ArrayList<>();
-                for (Map.Entry<String, Double> e : memberVals.entrySet()) {
-                    if (e.getValue() > 0.001) positivePayers.add(e.getKey());
-                    else if (e.getValue() < -0.001) negativeMembers.add(e);
-                }
+                    if (desc.toLowerCase().contains("total balance") || cost <= 0) continue;
 
-                if (positivePayers.size() == 1) {
-                    String payer = positivePayers.get(0);
-                    JSONObject payerObj = memberMap.get(payer);
-                    if (payerObj == null) continue;
-
-                    JSONArray splitArr = new JSONArray();
-                    for (Map.Entry<String, Double> neg : negativeMembers) {
-                        JSONObject splitItem = new JSONObject();
-                        splitItem.put("memberId", memberMap.get(neg.getKey()).getString("id"));
-                        splitItem.put("share", -neg.getValue());
-                        splitArr.put(splitItem);
-                    }
-                    double payerShare = cost;
-                    for (Map.Entry<String, Double> neg : negativeMembers) {
-                        payerShare -= (-neg.getValue());
-                    }
-                    if (payerShare > 0.001) {
-                        JSONObject payerSplit = new JSONObject();
-                        payerSplit.put("memberId", payerObj.getString("id"));
-                        payerSplit.put("share", Math.round(payerShare * 100.0) / 100.0);
-                        splitArr.put(payerSplit);
+                    Map<String, Double> memberVals = new HashMap<>();
+                    for (int m = 0; m < memberNames.size(); m++) {
+                        double v = 0.0;
+                        if (5 + m < row.size()) {
+                            try { v = Double.parseDouble(row.get(5 + m)); } catch (Exception ignored) {}
+                        }
+                        memberVals.put(memberNames.get(m), v);
                     }
 
-                    addExpense(clock, targetGroupId, desc, cost, payerObj.getString("id"), splitArr, cat, date, deviceId);
-                    count++;
-                } else if (positivePayers.size() > 1) {
-                    for (String payer : positivePayers) {
+                    if ("payment".equalsIgnoreCase(cat) || desc.toLowerCase().contains(" paid ")) {
+                        String payer = null, receiver = null;
+                        for (Map.Entry<String, Double> e : memberVals.entrySet()) {
+                            if (e.getValue() > 0) payer = e.getKey();
+                            if (e.getValue() < 0) receiver = e.getKey();
+                        }
+                        if (payer != null && receiver != null && memberMap.containsKey(payer) && memberMap.containsKey(receiver)) {
+                            JSONArray split = new JSONArray();
+                            split.put(memberMap.get(receiver).getString("id"));
+                            addExpense(clock, targetGroupId, desc, cost, memberMap.get(payer).getString("id"), split, "Payment", date, deviceId);
+                            count++;
+                            continue;
+                        }
+                    }
+
+                    List<String> positivePayers = new ArrayList<>();
+                    List<Map.Entry<String, Double>> negativeMembers = new ArrayList<>();
+                    for (Map.Entry<String, Double> e : memberVals.entrySet()) {
+                        if (e.getValue() > 0.001) positivePayers.add(e.getKey());
+                        else if (e.getValue() < -0.001) negativeMembers.add(e);
+                    }
+
+                    if (positivePayers.size() == 1) {
+                        String payer = positivePayers.get(0);
                         JSONObject payerObj = memberMap.get(payer);
                         if (payerObj == null) continue;
-                        double val = memberVals.get(payer);
-                        double totalShare = cost / memberNames.size();
-                        double paidAmt = Math.round((val + totalShare) * 100.0) / 100.0;
 
                         JSONArray splitArr = new JSONArray();
-                        for (String n : memberNames) {
-                            splitArr.put(memberMap.get(n).getString("id"));
+                        for (Map.Entry<String, Double> neg : negativeMembers) {
+                            JSONObject splitItem = new JSONObject();
+                            splitItem.put("memberId", memberMap.get(neg.getKey()).getString("id"));
+                            splitItem.put("share", -neg.getValue());
+                            splitArr.put(splitItem);
                         }
-                        addExpense(clock, targetGroupId, desc + " (" + payer + ")", paidAmt, payerObj.getString("id"), splitArr, cat, date, deviceId);
+                        double payerShare = cost;
+                        for (Map.Entry<String, Double> neg : negativeMembers) {
+                            payerShare -= (-neg.getValue());
+                        }
+                        if (payerShare > 0.001) {
+                            JSONObject payerSplit = new JSONObject();
+                            payerSplit.put("memberId", payerObj.getString("id"));
+                            payerSplit.put("share", Math.round(payerShare * 100.0) / 100.0);
+                            splitArr.put(payerSplit);
+                        }
+
+                        addExpense(clock, targetGroupId, desc, cost, payerObj.getString("id"), splitArr, cat, date, deviceId);
                         count++;
+                    } else if (positivePayers.size() > 1) {
+                        for (String payer : positivePayers) {
+                            JSONObject payerObj = memberMap.get(payer);
+                            if (payerObj == null) continue;
+                            double val = memberVals.get(payer);
+                            double totalShare = cost / memberNames.size();
+                            double paidAmt = Math.round((val + totalShare) * 100.0) / 100.0;
+
+                            JSONArray splitArr = new JSONArray();
+                            for (String n : memberNames) {
+                                splitArr.put(memberMap.get(n).getString("id"));
+                            }
+                            addExpense(clock, targetGroupId, desc + " (" + payer + ")", paidAmt, payerObj.getString("id"), splitArr, cat, date, deviceId);
+                            count++;
+                        }
                     }
                 }
+                db.setTransactionSuccessful();
+            } finally {
+                db.endTransaction();
             }
 
             res.put("success", true);
@@ -992,13 +1001,13 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
     public String getLastSeenHlc(String groupId, String peerDeviceId) {
         SQLiteDatabase db = getReadableDatabase();
-        Cursor c = db.rawQuery("SELECT last_seen_hlc FROM sync_state WHERE group_id = ? AND peer_device_id = ?",
-                new String[]{groupId, peerDeviceId});
         String res = "000000000000000-0000-0000";
-        if (c.moveToFirst()) {
-            res = c.getString(c.getColumnIndexOrThrow("last_seen_hlc"));
-        }
-        c.close();
+        try (Cursor c = db.rawQuery("SELECT last_seen_hlc FROM sync_state WHERE group_id = ? AND peer_device_id = ?",
+                new String[]{groupId, peerDeviceId})) {
+            if (c.moveToFirst()) {
+                res = c.getString(c.getColumnIndexOrThrow("last_seen_hlc"));
+            }
+        } catch (Exception ignored) {}
         return res;
     }
 
@@ -1024,10 +1033,16 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
                     clock.update(incomingHlc);
 
-                    Cursor c = db.rawQuery("SELECT updated_hlc FROM expenses WHERE id = ?", new String[]{expId});
-                    boolean exists = c.moveToFirst();
+                    boolean exists = false;
+                    String localHlc = null;
+                    try (Cursor c = db.rawQuery("SELECT updated_hlc FROM expenses WHERE id = ?", new String[]{expId})) {
+                        if (c.moveToFirst()) {
+                            exists = true;
+                            localHlc = c.getString(0);
+                        }
+                    }
+
                     if (!exists) {
-                        c.close();
                         ContentValues cv = new ContentValues();
                         cv.put("id", expId);
                         cv.put("group_id", groupId);
@@ -1043,22 +1058,18 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                         cv.put("updated_hlc", incomingHlc);
                         db.insert("expenses", null, cv);
                         merged++;
-                    } else {
-                        String localHlc = c.getString(0);
-                        c.close();
-                        if (HlcClock.compare(incomingHlc, localHlc) > 0) {
-                            ContentValues cv = new ContentValues();
-                            cv.put("description", incoming.getString("description"));
-                            cv.put("amount", incoming.getDouble("amount"));
-                            cv.put("paid_by", incoming.getString("paid_by"));
-                            cv.put("split_between", incoming.get("split_between").toString());
-                            cv.put("category", incoming.optString("category", "General"));
-                            cv.put("date", incoming.optString("date", todayDate()));
-                            cv.put("deleted", incoming.optBoolean("deleted", false) ? 1 : 0);
-                            cv.put("updated_hlc", incomingHlc);
-                            db.update("expenses", cv, "id = ?", new String[]{expId});
-                            merged++;
-                        }
+                    } else if (localHlc != null && HlcClock.compare(incomingHlc, localHlc) > 0) {
+                        ContentValues cv = new ContentValues();
+                        cv.put("description", incoming.getString("description"));
+                        cv.put("amount", incoming.getDouble("amount"));
+                        cv.put("paid_by", incoming.getString("paid_by"));
+                        cv.put("split_between", incoming.get("split_between").toString());
+                        cv.put("category", incoming.optString("category", "General"));
+                        cv.put("date", incoming.optString("date", todayDate()));
+                        cv.put("deleted", incoming.optBoolean("deleted", false) ? 1 : 0);
+                        cv.put("updated_hlc", incomingHlc);
+                        db.update("expenses", cv, "id = ?", new String[]{expId});
+                        merged++;
                     }
                 } catch (Exception ignored) {}
             }
@@ -1077,11 +1088,16 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             clock.update(incomingHlc);
 
             SQLiteDatabase db = getWritableDatabase();
-            Cursor c = db.rawQuery("SELECT * FROM expenses WHERE id = ?", new String[]{expId});
-            boolean exists = c.moveToFirst();
+            boolean exists = false;
+            String localHlc = null;
+            try (Cursor c = db.rawQuery("SELECT updated_hlc FROM expenses WHERE id = ?", new String[]{expId})) {
+                if (c.moveToFirst()) {
+                    exists = true;
+                    localHlc = c.getString(0);
+                }
+            }
 
             if (!exists) {
-                c.close();
                 ContentValues cv = new ContentValues();
                 cv.put("id", expId);
                 cv.put("group_id", groupId);
@@ -1099,10 +1115,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 return 1;
             }
 
-            String localHlc = c.getString(c.getColumnIndexOrThrow("updated_hlc"));
-            c.close();
-
-            if (HlcClock.compare(incomingHlc, localHlc) > 0) {
+            if (localHlc != null && HlcClock.compare(incomingHlc, localHlc) > 0) {
                 ContentValues cv = new ContentValues();
                 cv.put("description", incoming.getString("description"));
                 cv.put("amount", incoming.getDouble("amount"));
@@ -1355,31 +1368,38 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         SQLiteDatabase db = getWritableDatabase();
         ensureChatAndInviteTables(db);
         int merged = 0;
-        for (int i = 0; i < messagesArr.length(); i++) {
-            try {
-                JSONObject m = messagesArr.getJSONObject(i);
-                String id = m.getString("id");
-                String hlc = m.getString("hlc");
+        db.beginTransaction();
+        try {
+            for (int i = 0; i < messagesArr.length(); i++) {
+                try {
+                    JSONObject m = messagesArr.getJSONObject(i);
+                    String id = m.getString("id");
+                    String hlc = m.getString("hlc");
 
-                clock.update(hlc);
+                    clock.update(hlc);
 
-                Cursor c = db.rawQuery("SELECT id FROM messages WHERE id = ?", new String[]{id});
-                boolean exists = c.moveToFirst();
-                c.close();
+                    boolean exists = false;
+                    try (Cursor c = db.rawQuery("SELECT id FROM messages WHERE id = ?", new String[]{id})) {
+                        exists = c.moveToFirst();
+                    }
 
-                if (!exists) {
-                    ContentValues cv = new ContentValues();
-                    cv.put("id", id);
-                    cv.put("group_id", groupId);
-                    cv.put("sender_device_id", m.getString("sender_device_id"));
-                    cv.put("sender_name", m.getString("sender_name"));
-                    cv.put("text", m.getString("text"));
-                    cv.put("timestamp", m.optString("timestamp", nowIso()));
-                    cv.put("hlc", hlc);
-                    db.insert("messages", null, cv);
-                    merged++;
-                }
-            } catch (Exception ignored) {}
+                    if (!exists) {
+                        ContentValues cv = new ContentValues();
+                        cv.put("id", id);
+                        cv.put("group_id", groupId);
+                        cv.put("sender_device_id", m.getString("sender_device_id"));
+                        cv.put("sender_name", m.getString("sender_name"));
+                        cv.put("text", m.getString("text"));
+                        cv.put("timestamp", m.optString("timestamp", nowIso()));
+                        cv.put("hlc", hlc);
+                        db.insert("messages", null, cv);
+                        merged++;
+                    }
+                } catch (Exception ignored) {}
+            }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
         }
         return merged;
     }

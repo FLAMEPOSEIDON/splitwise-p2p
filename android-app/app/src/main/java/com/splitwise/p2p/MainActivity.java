@@ -602,6 +602,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         @JavascriptInterface
         public String addExpense(String groupId, String desc, double amount, String paidBy, String splitBetweenJson, String category, String date) {
             try {
+                if (amount <= 0 || groupId == null || groupId.trim().isEmpty()) return "{}";
                 JSONArray split = new JSONArray(splitBetweenJson);
                 JSONObject exp = dbHelper.addExpense(hlcClock, groupId, desc, amount, paidBy, split, category, date, deviceId);
                 if (syncService != null) syncService.broadcastSync();
@@ -615,6 +616,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         @JavascriptInterface
         public String updateExpense(String groupId, String expenseId, String desc, double amount, String paidBy, String splitBetweenJson, String category, String date) {
             try {
+                if (amount <= 0 || expenseId == null || expenseId.trim().isEmpty()) return "{}";
                 JSONArray split = new JSONArray(splitBetweenJson);
                 JSONObject exp = dbHelper.updateExpense(hlcClock, expenseId, desc, amount, paidBy, split, category, date, deviceId);
                 if (syncService != null) syncService.broadcastSync();
@@ -634,6 +636,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
 
         @JavascriptInterface
         public String settleDebt(String groupId, String payerId, String receiverId, double amount) {
+            if (amount <= 0) return "{}";
             JSONObject s = dbHelper.settleDebt(hlcClock, groupId, payerId, receiverId, amount, deviceId);
             if (syncService != null) syncService.broadcastSync();
             if (nearbySyncService != null) nearbySyncService.broadcastSync();

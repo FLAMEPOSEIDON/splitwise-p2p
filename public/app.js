@@ -235,17 +235,24 @@ const el = {
 // -------------------------------------------------------------
 
 function formatMoney(amount) {
-  const num = Math.abs(amount || 0);
+  const val = typeof amount === 'string' ? parseFloat(amount) : amount;
+  const isNegative = typeof val === 'number' && val < -0.005;
+  const num = Math.abs(val || 0);
   const formatted = num.toLocaleString('en-IN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
-  return `${amount < 0 ? '-' : ''}₹${formatted}`;
+  return `${isNegative ? '-' : ''}₹${formatted}`;
 }
 
 function formatDate(dateStr) {
   if (!dateStr) return '';
   try {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      const [year, month, day] = dateStr.split('-').map(Number);
+      const d = new Date(year, month - 1, day);
+      return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    }
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return dateStr;
     return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -1770,6 +1777,15 @@ safeOn(el.formAddExpense, 'submit', async (e) => {
   const date = el.expDate.value;
   const category = el.expCategory.value;
   const paidBy = el.expPaidBy.value;
+
+  if (!description) {
+    showToast('Please enter an expense description');
+    return;
+  }
+  if (isNaN(amount) || amount <= 0) {
+    showToast('Please enter a valid amount greater than ₹0');
+    return;
+  }
 
   let splitBetween = [];
   if (state.splitMode === 'EQUAL') {
