@@ -82,9 +82,13 @@ const el = {
   viewGroups: document.getElementById('view-groups'),
   viewActivity: document.getElementById('view-activity'),
   viewGroupDetail: document.getElementById('view-group-detail'),
+  viewMenu: document.getElementById('view-menu'),
   viewNetwork: document.getElementById('view-network'),
   viewCert: document.getElementById('view-cert'),
   viewMongo: document.getElementById('view-mongo'),
+  viewUpdates: document.getElementById('view-updates'),
+  btnEditProfileMenu: document.getElementById('btn-edit-profile-menu'),
+  btnSyncNowMenu: document.getElementById('btn-sync-now-menu'),
 
   // MongoDB Addon Elements
   mongoStatusBadge: document.getElementById('mongo-status-badge'),
@@ -394,13 +398,82 @@ function updateFabVisibility() {
 }
 window.updateFabVisibility = updateFabVisibility;
 
+function switchMenuSubTab(subTabId) {
+  state.activeMenuSubTab = subTabId;
+
+  document.querySelectorAll('.menu-tab-btn').forEach((btn) => {
+    if (btn.getAttribute('data-subtab') === subTabId) btn.classList.add('active');
+    else btn.classList.remove('active');
+  });
+
+  const tabPanes = {
+    'tab-mesh': 'view-network',
+    'tab-mongo': 'view-mongo',
+    'tab-install': 'view-cert',
+    'tab-updates': 'view-updates',
+  };
+
+  Object.entries(tabPanes).forEach(([tab, paneId]) => {
+    const pane = document.getElementById(paneId);
+    if (pane) pane.style.display = tab === subTabId ? 'block' : 'none';
+  });
+
+  if (subTabId === 'tab-mongo') loadMongoStatus();
+  if (subTabId === 'tab-updates') checkForUpdates(false);
+  if (subTabId === 'tab-mesh') {
+    renderInfo();
+    triggerManualSync();
+  }
+}
+window.switchMenuSubTab = switchMenuSubTab;
+
+function triggerManualSync() {
+  if (isNativeApp && window.AndroidBridge && typeof window.AndroidBridge.syncNow === 'function') {
+    window.AndroidBridge.syncNow();
+    showToast('🔄 Syncing mesh with nearby devices...');
+  } else {
+    showToast('🔄 Refreshing data...');
+  }
+  refreshData();
+  if (state.activeGroupId) {
+    loadGroupDetail(state.activeGroupId, false);
+  }
+  if (state.activeChatConversationId) {
+    loadMessages(state.activeChatConversationId);
+  }
+}
+window.triggerManualSync = triggerManualSync;
+
 function switchView(viewId, isBack = false) {
+  let targetSubTab = null;
+  if (viewId === 'view-network') {
+    viewId = 'view-menu';
+    targetSubTab = 'tab-mesh';
+  } else if (viewId === 'view-mongo') {
+    viewId = 'view-menu';
+    targetSubTab = 'tab-mongo';
+  } else if (viewId === 'view-cert') {
+    viewId = 'view-menu';
+    targetSubTab = 'tab-install';
+  } else if (viewId === 'view-updates') {
+    viewId = 'view-menu';
+    targetSubTab = 'tab-updates';
+  }
+
   state.activeView = viewId;
-  const views = ['view-groups', 'view-chat', 'view-activity', 'view-group-detail', 'view-network', 'view-cert', 'view-mongo'];
-  views.forEach((v) => {
+  const rootViews = ['view-groups', 'view-chat', 'view-activity', 'view-group-detail', 'view-menu'];
+  rootViews.forEach((v) => {
     const elem = document.getElementById(v);
     if (elem) elem.style.display = v === viewId ? 'block' : 'none';
   });
+
+  if (viewId === 'view-menu') {
+    if (targetSubTab) {
+      switchMenuSubTab(targetSubTab);
+    } else if (!state.activeMenuSubTab) {
+      switchMenuSubTab('tab-mesh');
+    }
+  }
 
   if (!isBack) {
     try {
@@ -416,15 +489,15 @@ function switchView(viewId, isBack = false) {
     loadActivityFeed();
   }
 
-  if (viewId === 'view-mongo') {
-    loadMongoStatus();
-  }
-
   updateFabVisibility();
 
   document.querySelectorAll('.bottom-nav .nav-item').forEach((item) => {
-    if (item.getAttribute('data-view') === viewId) item.classList.add('active');
-    else item.classList.remove('active');
+    const itemTarget = item.getAttribute('data-view');
+    if (itemTarget === viewId || (viewId === 'view-menu' && itemTarget === 'view-menu')) {
+      item.classList.add('active');
+    } else {
+      item.classList.remove('active');
+    }
   });
 
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -491,6 +564,9 @@ async function fetchApi(endpoint, options = {}) {
       }
       if (endpoint === '/api/groups/join' && options.method === 'POST') {
         const body = JSON.parse(options.body || '{}');
+        if (typeof window.AndroidBridge.joinGroupWithName === 'function') {
+          return JSON.parse(window.AndroidBridge.joinGroupWithName(body.groupId, body.groupName || '', body.yourName || 'Me'));
+        }
         return JSON.parse(window.AndroidBridge.joinGroup(body.groupId, body.yourName || 'Me'));
       }
       const matchMessages = endpoint.match(/^\/api\/groups\/([a-zA-Z0-9_-]+)\/messages$/);
@@ -781,13 +857,24 @@ function renderInfo() {
 }
 
 function renderPeers(peers) {
+  const countBadge = document.getElementById('mesh-peer-count');
+  if (countBadge) {
+    countBadge.textContent = (peers && peers.length) || 0;
+  }
   if (!el.peersListContainer) return;
+
   if (!peers || peers.length === 0) {
     el.peersListContainer.innerHTML = `
-      <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 22px 16px; text-align: center; color: var(--text-muted); font-size: 0.88rem;">
-        <div style="font-size: 2rem; margin-bottom: 8px;">📡</div>
-        <div style="font-weight: 700; color: var(--text); margin-bottom: 4px;">Scanning for Nearby Friends...</div>
-        <div>Keep Splitwise P2P open on both phones.<br>They will appear here automatically with their custom name!</div>
+      <div class="mesh-empty-state">
+        <div class="mesh-radar-icon">📡</div>
+        <div class="mesh-empty-title">Scanning for Nearby Friends...</div>
+        <div class="mesh-empty-sub">
+          Keep Splitwise P2P open on both phones.<br>
+          Nearby phones on Quick Share or Wi-Fi appear here automatically!
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="triggerManualSync()" style="margin-top: 12px;">
+          🔄 Scan Subnet Now
+        </button>
       </div>
     `;
     return;
@@ -798,21 +885,27 @@ function renderPeers(peers) {
       const displayName = p.name || 'Nearby Peer';
       const initial = (displayName.replace(/^Android User /i, '')[0] || '📱').toUpperCase();
       const isConnected = p.connected !== false;
+      const isWifi = (p.type && p.type.toLowerCase().includes('wi-fi')) || p.host;
+      const techLabel = isWifi ? 'Wi-Fi' : 'Quick Share';
+      const subInfo = p.host ? p.host : (p.deviceId ? `ID: ${p.deviceId.slice(0, 8)}` : 'Mesh Peer');
+
       return `
-    <div class="group-card" style="cursor: default; display: flex; align-items: center; justify-content: space-between; padding: 14px 16px;">
-      <div class="group-info" style="display: flex; align-items: center; gap: 12px;">
-        <div class="group-avatar" style="background: linear-gradient(135deg, var(--cyan), var(--primary)); width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; font-weight: bold; color: #fff;">${escapeHtml(initial)}</div>
-        <div>
-          <div class="group-name" style="font-size: 1rem; font-weight: 700;">${escapeHtml(displayName)}</div>
-          <div class="group-meta" style="font-size: 0.78rem; color: var(--text-muted);">${escapeHtml(p.type || 'Quick Share Mesh')} ${p.host ? '• ' + p.host : ''}</div>
+    <div class="mesh-peer-item">
+      <div class="peer-avatar-wrapper">
+        <div class="peer-avatar">${escapeHtml(initial)}</div>
+        <div class="peer-online-dot ${isConnected ? '' : 'syncing'}" title="${isConnected ? 'Connected' : 'Discovered'}"></div>
+      </div>
+      <div class="peer-info-col">
+        <div class="peer-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</div>
+        <div class="peer-meta">
+          <span class="peer-tech-badge ${isWifi ? 'wifi' : ''}">${escapeHtml(techLabel)}</span>
+          <span style="font-family: monospace; font-size: 0.7rem;">${escapeHtml(subInfo)}</span>
         </div>
       </div>
-      <div style="display: flex; align-items: center; gap: 8px;">
-        <button class="btn btn-secondary btn-sm" onclick="startDirectChatWithPeer('${escapeHtml(p.deviceId || '')}', '${escapeHtml(displayName)}')">💬 Chat</button>
-        <div class="status-pill" style="border-color: ${isConnected ? 'var(--primary)' : 'var(--cyan)'}; background: ${isConnected ? 'rgba(16, 185, 129, 0.15)' : 'rgba(6, 182, 212, 0.15)'};">
-          <div class="status-dot ${isConnected ? 'online' : 'syncing'}"></div>
-          <span style="font-size: 0.78rem; font-weight: 600; color: ${isConnected ? 'var(--primary)' : 'var(--cyan)'};">${isConnected ? 'Connected' : 'Discovered'}</span>
-        </div>
+      <div class="peer-actions-col">
+        <button class="btn-peer-chat" onclick="startDirectChatWithPeer('${escapeHtml(p.deviceId || '')}', '${escapeHtml(displayName)}')" title="Chat with ${escapeHtml(displayName)}">
+          💬 Chat
+        </button>
       </div>
     </div>
   `;
@@ -2412,7 +2505,7 @@ window.acceptGroupInvite = async function(groupId, groupName) {
   const myName = (state.info && state.info.deviceName) || 'Me';
   await fetchApi('/api/groups/join', {
     method: 'POST',
-    body: JSON.stringify({ groupId, yourName: myName }),
+    body: JSON.stringify({ groupId, groupName: groupName || '', yourName: myName }),
   });
   await fetchApi('/api/invites/dismiss', {
     method: 'POST',
@@ -2491,9 +2584,13 @@ document.querySelectorAll('.bottom-nav .nav-item').forEach((item) => {
 
 // Header navigation & Modal Openers (Safe bindings)
 safeOn(el.btnEditProfileNetwork, 'click', () => openModal('modal-profile'));
-safeOn(el.btnEditProfile, 'click', () => openModal('modal-profile'));
+safeOn(el.btnEditProfileMenu, 'click', () => openModal('modal-profile'));
+safeOn(el.btnSyncNowMenu, 'click', () => triggerManualSync());
 safeOn(el.brandHome, 'click', () => switchView('view-groups'));
-safeOn(el.statusPill, 'click', () => switchView('view-network'));
+safeOn(el.statusPill, 'click', () => {
+  switchView('view-menu');
+  triggerManualSync();
+});
 safeOn(el.btnCertHeader, 'click', () => switchView('view-cert'));
 safeOn(el.btnBackToGroups, 'click', () => switchView('view-groups'));
 safeOn(el.btnCreateGroupModal, 'click', () => openModal('modal-create-group'));
@@ -2654,7 +2751,14 @@ async function checkForUpdates(isManual = false) {
     const commitDate = new Date(commitData.commit.author.date).toLocaleString('en-IN');
     const commitAuthor = commitData.commit.author.name;
 
-    const currentSha = localStorage.getItem('splitwise_installed_commit') || '';
+    let currentSha = '';
+    if (isNativeApp && window.AndroidBridge && typeof window.AndroidBridge.getInstalledCommit === 'function') {
+      currentSha = window.AndroidBridge.getInstalledCommit();
+    }
+    if (!currentSha) {
+      currentSha = localStorage.getItem('splitwise_installed_commit') || '';
+    }
+    const dismissedSha = localStorage.getItem('splitwise_dismissed_commit') || '';
 
     latestUpdateData = {
       sha: latestSha,
@@ -2666,7 +2770,7 @@ async function checkForUpdates(isManual = false) {
       repoUrl: `https://github.com/${GITHUB_REPO}`,
     };
 
-    if (currentSha && latestSha !== currentSha) {
+    if (currentSha && latestSha !== currentSha && dismissedSha !== latestSha) {
       if (el.btnHeaderUpdate) el.btnHeaderUpdate.style.display = 'inline-flex';
       if (el.updateStatusText) {
         el.updateStatusText.innerHTML = `🚀 <strong style="color: var(--cyan);">Update Available:</strong> ${escapeHtml(commitMsg)} (${latestSha})`;
@@ -2678,6 +2782,9 @@ async function checkForUpdates(isManual = false) {
     } else if (!currentSha) {
       // First run on this build: record this sha as current
       localStorage.setItem('splitwise_installed_commit', latestSha);
+      if (isNativeApp && window.AndroidBridge && typeof window.AndroidBridge.setInstalledCommit === 'function') {
+        window.AndroidBridge.setInstalledCommit(latestSha);
+      }
       if (el.btnHeaderUpdate) el.btnHeaderUpdate.style.display = 'none';
       if (el.updateStatusText) {
         el.updateStatusText.innerHTML = `✅ Up to date (${latestSha})`;
@@ -2705,6 +2812,23 @@ async function checkForUpdates(isManual = false) {
   }
 }
 
+function dismissUpdate() {
+  if (latestUpdateData) {
+    localStorage.setItem('splitwise_dismissed_commit', latestUpdateData.sha);
+    localStorage.setItem('splitwise_installed_commit', latestUpdateData.sha);
+    if (isNativeApp && window.AndroidBridge && typeof window.AndroidBridge.setInstalledCommit === 'function') {
+      window.AndroidBridge.setInstalledCommit(latestUpdateData.sha);
+    }
+  }
+  if (el.btnHeaderUpdate) el.btnHeaderUpdate.style.display = 'none';
+  if (el.updateStatusText) {
+    el.updateStatusText.innerHTML = `✅ Up to date (marked as installed)`;
+  }
+  closeModal('modal-update-available');
+  showToast('Update badge dismissed');
+}
+window.dismissUpdate = dismissUpdate;
+
 function openUpdateModal() {
   if (!latestUpdateData) {
     checkForUpdates(true);
@@ -2725,6 +2849,12 @@ function performAppUpdate() {
   const targetSha = latestUpdateData.sha;
   closeModal('modal-update-available');
 
+  localStorage.setItem('splitwise_installed_commit', targetSha);
+  localStorage.setItem('splitwise_dismissed_commit', targetSha);
+  if (isNativeApp && window.AndroidBridge && typeof window.AndroidBridge.setInstalledCommit === 'function') {
+    window.AndroidBridge.setInstalledCommit(targetSha);
+  }
+
   if (isNativeApp && window.AndroidBridge && typeof window.AndroidBridge.performOtaUpdate === 'function') {
     showToast('⚡ Updating app directly over the air...');
     window.AndroidBridge.performOtaUpdate(targetSha);
@@ -2732,7 +2862,6 @@ function performAppUpdate() {
     window.AndroidBridge.installApkUpdate(latestUpdateData.downloadUrl);
     showToast('Starting APK download & update...');
   } else {
-    localStorage.setItem('splitwise_installed_commit', targetSha);
     window.open(latestUpdateData.downloadUrl, '_blank');
     showToast('Opening download link...');
     setTimeout(() => {
@@ -2864,6 +2993,8 @@ window.loadActivityFeed = loadActivityFeed;
 window.filterActivityByGroup = filterActivityByGroup;
 window.checkForUpdates = checkForUpdates;
 window.openUpdateModal = openUpdateModal;
+window.dismissUpdate = dismissUpdate;
+window.triggerManualSync = triggerManualSync;
 window.performAppUpdate = performAppUpdate;
 window.openEditExpenseModal = openEditExpenseModal;
 window.deleteExpense = deleteExpense;

@@ -315,13 +315,9 @@
       </div>
     </div>
 
-    <!-- VIEW 3: Network & Mesh Sync -->
-    <div id="view-network" style="display: none;">
-      <div class="section-header">
-        <h2 class="section-title">Profile & Network Mesh</h2>
-      </div>
-
-      <!-- User Profile Card -->
+    <!-- VIEW: Menu (Profile, Mesh Discover, MongoDB, Install, Updates) -->
+    <div id="view-menu" style="display: none;">
+      <!-- Profile Hero Card -->
       <div class="profile-hero-card">
         <div class="profile-avatar-large" id="profile-card-avatar">👤</div>
         <div class="profile-info-col">
@@ -330,142 +326,195 @@
             <span id="profile-card-dev-id">Device: ...</span> • <span style="color: var(--primary);">Mesh Active</span>
           </div>
         </div>
-        <button class="btn btn-secondary btn-sm btn-edit-profile-action" id="btn-edit-profile-network" onclick="openModal('modal-profile')">
-          ✏️ Edit Name
+        <div style="display: flex; gap: 8px; flex-shrink: 0;">
+          <button class="btn btn-secondary btn-sm" id="btn-edit-profile-menu" onclick="openModal('modal-profile')">
+            ✏️ Edit
+          </button>
+          <button class="btn btn-primary btn-sm" id="btn-sync-now-menu" onclick="triggerManualSync()" title="Sync database with nearby devices now">
+            🔄 Sync
+          </button>
+        </div>
+      </div>
+
+      <!-- Segmented Menu Navigation Sub-Tabs -->
+      <div class="menu-tabs-bar">
+        <button class="menu-tab-btn active" data-subtab="tab-mesh" onclick="switchMenuSubTab('tab-mesh')">
+          📡 Mesh Discover
+        </button>
+        <button class="menu-tab-btn" data-subtab="tab-mongo" onclick="switchMenuSubTab('tab-mongo')">
+          🍃 MongoDB
+        </button>
+        <button class="menu-tab-btn" data-subtab="tab-install" onclick="switchMenuSubTab('tab-install')">
+          🛡️ Install & CA
+        </button>
+        <button class="menu-tab-btn" data-subtab="tab-updates" onclick="switchMenuSubTab('tab-updates')">
+          🚀 Updates
         </button>
       </div>
 
-      <div class="group-header-card">
-        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
-          <div class="status-dot online"></div>
-          <h3 style="font-size: 1.1rem;">Offline Mesh Discovery</h3>
+      <!-- SUB-TAB 1: Mesh Discover -->
+      <div id="view-network" class="menu-subtab-pane">
+        <!-- Compact Modern Mesh Status Card -->
+        <div class="mesh-status-card">
+          <div class="mesh-status-header">
+            <div class="mesh-status-pill">
+              <span class="status-dot online"></span>
+              <span id="net-quickshare-status">Quick Share & Wi-Fi Active</span>
+            </div>
+            <button class="btn btn-secondary btn-sm" id="btn-manual-peer-modal" onclick="openModal('modal-manual-peer')">
+              + Connect IP
+            </button>
+          </div>
+          <div class="mesh-status-details">
+            <div class="mesh-stat-row">
+              <span class="mesh-stat-label">Device Name:</span>
+              <span class="mesh-stat-val" id="net-device-name">...</span>
+            </div>
+            <div class="mesh-stat-row">
+              <span class="mesh-stat-label">Device ID:</span>
+              <span class="mesh-stat-val" id="net-device-id">...</span>
+            </div>
+            <div class="mesh-stat-row">
+              <span class="mesh-stat-label">Subnet IP & Port:</span>
+              <span class="mesh-stat-val highlight" id="net-local-ip">...</span>
+            </div>
+          </div>
         </div>
-        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 14px;">
-          Supports <strong>Google Quick Share (Nearby Connections)</strong> via BLE + Wi-Fi Direct and local Wi-Fi TCP sync.
-        </p>
-        <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: var(--radius-sm); font-size: 0.85rem;">
-          <div><strong>Your Device ID:</strong> <span id="net-device-id" style="font-family: monospace;">...</span></div>
-          <div style="margin-top: 4px;"><strong>Your Device Name:</strong> <span id="net-device-name">...</span></div>
-          <div style="margin-top: 4px;"><strong>Host IP:Port:</strong> <span id="net-local-ip" style="font-family: monospace; color: var(--cyan);">...</span></div>
-          <div style="margin-top: 4px;"><strong>Quick Share Status:</strong> <span id="net-quickshare-status" style="color: var(--primary);">Active (BLE + Wi-Fi Direct)</span></div>
+
+        <!-- Discovered Peers Section Header -->
+        <div class="section-header" style="margin-top: 18px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <h3 class="section-title" style="font-size: 1rem;">Discovered Mesh Peers</h3>
+            <span class="peer-count-badge" id="mesh-peer-count">0</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="triggerManualSync()">🔄 Refresh</button>
+        </div>
+
+        <div id="peers-list-container">
+          <!-- Dynamically populated with sleek compact peer cards -->
         </div>
       </div>
 
-      <div class="section-header">
-        <h3 class="section-title" style="font-size: 1rem;">Discovered Mesh Peers</h3>
-        <button class="btn btn-secondary btn-sm" id="btn-manual-peer-modal">+ Connect IP</button>
-      </div>
+      <!-- SUB-TAB 2: MongoDB Cloud Addon -->
+      <div id="view-mongo" class="menu-subtab-pane" style="display: none;">
+        <div class="section-header">
+          <h2 class="section-title">Free MongoDB Cloud Addon</h2>
+        </div>
 
-      <div id="peers-list-container">
-        <!-- Dynamically populated -->
-      </div>
-
-      <!-- App Version & GitHub Updates Card -->
-      <div class="group-header-card" style="margin-top: 16px;">
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-          <div style="display: flex; align-items: center; gap: 10px;">
-            <div style="width: 32px; height: 32px; border-radius: 8px; background: rgba(16, 185, 129, 0.2); display: flex; align-items: center; justify-content: center; font-size: 1.1rem;">
-              🚀
+        <div class="group-header-card">
+          <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+            <div style="width: 38px; height: 38px; border-radius: 10px; background: #00ed64; display: flex; align-items: center; justify-content: center; font-size: 1.3rem;">
+              🍃
             </div>
             <div>
-              <div style="font-weight: 700; font-size: 0.95rem;">App Updates & GitHub</div>
-              <div style="font-size: 0.75rem; color: var(--text-dim);" id="app-version-label">v1.2.1 • FLAMEPOSEIDON/splitwise-p2p</div>
+              <h3 style="font-size: 1.05rem;">Dual Storage Mode</h3>
+              <span id="mongo-status-badge" style="font-size: 0.8rem; color: var(--text-muted);">Status: 100% Local Only (Offline Mesh)</span>
             </div>
           </div>
-          <button class="btn btn-secondary btn-sm" id="btn-check-updates" onclick="checkForUpdates(true)">
-            Check Update
-          </button>
-        </div>
-        <div id="update-status-text" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 6px;">
-          Connected to GitHub repository. Tap above to check for updates.
+          <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; margin-bottom: 16px;">
+            Data is always saved locally. Optionally plug in your free MongoDB database to sync when you are online across different Wi-Fi networks!
+          </p>
+
+          <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+            <button class="btn btn-secondary btn-sm" id="mode-btn-local" style="flex: 1; border-color: var(--primary);">📴 100% Local Only</button>
+            <button class="btn btn-secondary btn-sm" id="mode-btn-mongo" style="flex: 1;">☁️ Local + MongoDB</button>
+          </div>
+
+          <form id="form-mongo-addon" style="display: none;">
+            <div class="form-group">
+              <label class="form-label">MongoDB Connection String</label>
+              <input type="text" class="form-input" id="mongo-uri" placeholder="mongodb+srv://user:pass@cluster.mongodb.net" style="font-family: monospace; font-size: 0.8rem;">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Database Name</label>
+              <input type="text" class="form-input" id="mongo-dbname" value="splitwise">
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button type="submit" class="btn btn-primary" id="btn-save-mongo" style="flex: 2;">Save & Connect</button>
+              <button type="button" class="btn btn-secondary" id="btn-disable-mongo" style="flex: 1;">Disable</button>
+            </div>
+          </form>
+
+          <div id="mongo-sync-info" style="display: none; margin-top: 14px; font-size: 0.82rem; color: var(--text-muted); border-top: 1px solid var(--border); padding-top: 10px;">
+            Last Cloud Sync: <span id="mongo-last-sync-time" style="color: var(--text);">Never</span>
+            <button class="btn btn-secondary btn-sm" id="btn-sync-mongo-now" style="float: right; padding: 2px 8px; font-size: 0.75rem;">☁️ Sync Now</button>
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- VIEW 4: Certificate & Trusted Install -->
-    <div id="view-cert" style="display: none;">
-      <div class="section-header">
-        <h2 class="section-title">Trusted Certificate & Installation</h2>
+      <!-- SUB-TAB 3: Certificate & Trusted Install -->
+      <div id="view-cert" class="menu-subtab-pane" style="display: none;">
+        <div class="section-header">
+          <h2 class="section-title">Trusted Certificate & Installation</h2>
+        </div>
+
+        <div class="hero-card" style="border-color: rgba(16, 185, 129, 0.4); background: linear-gradient(135deg, rgba(16, 185, 129, 0.08), rgba(6, 182, 212, 0.08));">
+          <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 10px;">
+            <div style="width: 36px; height: 36px; border-radius: 10px; background: var(--primary); display: flex; align-items: center; justify-content: center; color: white;">
+              🛡️
+            </div>
+            <div>
+              <h3 style="font-size: 1.05rem;">Splitwise P2P Local CA</h3>
+              <span style="font-size: 0.78rem; color: var(--primary);">Verified Local Authority</span>
+            </div>
+          </div>
+          <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; margin-bottom: 16px;">
+            Modern mobile browsers (Chrome on Android, Safari on iOS) require a trusted HTTPS certificate to enable 1-tap app installation and offline background caching.
+          </p>
+          <a href="/splitwise-root-ca.crt" download class="btn btn-primary btn-block">
+            📥 Download Root CA Certificate
+          </a>
+        </div>
+
+        <h3 style="font-size: 1rem; margin-bottom: 12px; color: var(--text);">How to Install on Your Device:</h3>
+
+        <div class="guide-step">
+          <div class="step-header">
+            <div class="step-num">1</div>
+            <span>Android (Phones & Tablets)</span>
+          </div>
+          <div class="step-body">
+            1. Tap <strong>Download Root CA Certificate</strong> above.<br>
+            2. Open phone <strong>Settings → Security & Privacy → More security settings → Install from device storage → CA certificate</strong>.<br>
+            3. Tap <strong>Install anyway</strong> and select <code>splitwise-root-ca.crt</code>.<br>
+            4. Return to Chrome and tap <strong>Menu (3 dots) → Install app / Add to Home screen</strong>.
+          </div>
+        </div>
       </div>
 
-      <div class="hero-card" style="border-color: rgba(16, 185, 129, 0.4); background: linear-gradient(135deg, rgba(16, 185, 129, 0.08), rgba(6, 182, 212, 0.08));">
-        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 10px;">
-          <div style="width: 36px; height: 36px; border-radius: 10px; background: var(--primary); display: flex; align-items: center; justify-content: center; color: white;">
-            🛡️
-          </div>
-          <div>
-            <h3 style="font-size: 1.05rem;">Splitwise P2P Local CA</h3>
-            <span style="font-size: 0.78rem; color: var(--primary);">Verified Local Authority</span>
-          </div>
-        </div>
-        <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; margin-bottom: 16px;">
-          Modern mobile browsers (Chrome on Android, Safari on iOS) require a trusted HTTPS certificate to enable 1-tap app installation and offline background caching.
-        </p>
-        <a href="/splitwise-root-ca.crt" download class="btn btn-primary btn-block">
-          📥 Download Root CA Certificate
-        </a>
-      </div>
-
-      <h3 style="font-size: 1rem; margin-bottom: 12px; color: var(--text);">How to Install on Your Device:</h3>
-
-      <!-- Android Guide -->
-      <div class="guide-step">
-        <div class="step-header">
-          <div class="step-num">1</div>
-          <span>Android (Phones & Tablets)</span>
-        </div>
-        <div class="step-body">
-          1. Tap <strong>Download Root CA Certificate</strong> above.<br>
-          2. Open phone <strong>Settings → Security & Privacy → More security settings → Install from device storage → CA certificate</strong>.<br>
-          3. Tap <strong>Install anyway</strong> and select <code>splitwise-root-ca.crt</code>.<br>
-          4. Return to Chrome and tap <strong>Menu (3 dots) → Install app / Add to Home screen</strong>.
-        </div>
-      </div>
-    </div>
-
-    <!-- VIEW 5: MongoDB Cloud Addon -->
-    <div id="view-mongo" style="display: none;">
-      <div class="section-header">
-        <h2 class="section-title">Free MongoDB Cloud Addon</h2>
-      </div>
-
-      <div class="group-header-card">
-        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
-          <div style="width: 38px; height: 38px; border-radius: 10px; background: #00ed64; display: flex; align-items: center; justify-content: center; font-size: 1.3rem;">
-            🍃
-          </div>
-          <div>
-            <h3 style="font-size: 1.05rem;">Dual Storage Mode</h3>
-            <span id="mongo-status-badge" style="font-size: 0.8rem; color: var(--text-muted);">Status: 100% Local Only (Offline Mesh)</span>
-          </div>
-        </div>
-        <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; margin-bottom: 16px;">
-          Data is always saved locally. Optionally plug in your free MongoDB database to sync when you are online across different Wi-Fi networks!
-        </p>
-
-        <div style="display: flex; gap: 8px; margin-bottom: 16px;">
-          <button class="btn btn-secondary btn-sm" id="mode-btn-local" style="flex: 1; border-color: var(--primary);">📴 100% Local Only</button>
-          <button class="btn btn-secondary btn-sm" id="mode-btn-mongo" style="flex: 1;">☁️ Local + MongoDB</button>
+      <!-- SUB-TAB 4: App Version & GitHub Updates -->
+      <div id="view-updates" class="menu-subtab-pane" style="display: none;">
+        <div class="section-header">
+          <h2 class="section-title">App Updates & Version</h2>
         </div>
 
-        <form id="form-mongo-addon" style="display: none;">
-          <div class="form-group">
-            <label class="form-label">MongoDB Connection String</label>
-            <input type="text" class="form-input" id="mongo-uri" placeholder="mongodb+srv://user:pass@cluster.mongodb.net" style="font-family: monospace; font-size: 0.8rem;">
+        <div class="group-header-card">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <div style="width: 36px; height: 36px; border-radius: 10px; background: rgba(16, 185, 129, 0.2); display: flex; align-items: center; justify-content: center; font-size: 1.2rem;">
+                🚀
+              </div>
+              <div>
+                <div style="font-weight: 700; font-size: 1rem;">Splitwise P2P Native</div>
+                <div style="font-size: 0.78rem; color: var(--text-dim);" id="app-version-label">v1.3.0 • FLAMEPOSEIDON/splitwise-p2p</div>
+              </div>
+            </div>
+            <button class="btn btn-secondary btn-sm" id="btn-check-updates" onclick="checkForUpdates(true)">
+              Check Update
+            </button>
           </div>
-          <div class="form-group">
-            <label class="form-label">Database Name</label>
-            <input type="text" class="form-input" id="mongo-dbname" value="splitwise">
+          <div id="update-status-text" style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 14px; background: rgba(0,0,0,0.25); padding: 10px 12px; border-radius: var(--radius-sm);">
+            Connected to GitHub repository. Tap above to check for updates.
           </div>
-          <div style="display: flex; gap: 8px;">
-            <button type="submit" class="btn btn-primary" id="btn-save-mongo" style="flex: 2;">Save & Connect</button>
-            <button type="button" class="btn btn-secondary" id="btn-disable-mongo" style="flex: 1;">Disable</button>
-          </div>
-        </form>
 
-        <div id="mongo-sync-info" style="display: none; margin-top: 14px; font-size: 0.82rem; color: var(--text-muted); border-top: 1px solid var(--border); padding-top: 10px;">
-          Last Cloud Sync: <span id="mongo-last-sync-time" style="color: var(--text);">Never</span>
-          <button class="btn btn-secondary btn-sm" id="btn-sync-mongo-now" style="float: right; padding: 2px 8px; font-size: 0.75rem;">☁️ Sync Now</button>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <button class="btn btn-primary btn-block" onclick="openUpdateModal()">
+              🚀 View Update Details
+            </button>
+            <button type="button" class="btn btn-secondary btn-block" onclick="dismissUpdate()" style="font-size: 0.82rem; color: var(--text-muted);">
+              ✕ Dismiss / Mark as Installed
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -475,7 +524,7 @@
   <!-- Floating Add Expense Button -->
   <button class="fab" id="fab-add-expense" style="display: none;" title="Add Expense">+</button>
 
-  <!-- Bottom Navigation Bar -->
+  <!-- Bottom Navigation Bar (4 Primary Items) -->
   <nav class="bottom-nav">
     <div class="nav-item active" data-view="view-groups">
       <div class="nav-icon">
@@ -509,35 +558,15 @@
       <div class="nav-label">Activity</div>
     </div>
 
-    <div class="nav-item" data-view="view-network">
+    <div class="nav-item" data-view="view-menu">
       <div class="nav-icon">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
-          <path d="M1.42 9a16 16 0 0 1 21.16 0"/>
-          <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
-          <line x1="12" y1="20" x2="12.01" y2="20"/>
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="3" y1="6" x2="21" y2="6"></line>
+          <line x1="3" y1="12" x2="21" y2="12"></line>
+          <line x1="3" y1="18" x2="21" y2="18"></line>
         </svg>
       </div>
-      <div class="nav-label">Network</div>
-    </div>
-
-    <div class="nav-item" data-view="view-mongo">
-      <div class="nav-icon">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>
-        </svg>
-      </div>
-      <div class="nav-label">MongoDB</div>
-    </div>
-
-    <div class="nav-item" data-view="view-cert">
-      <div class="nav-icon">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-          <path d="m9 12 2 2 4-4"/>
-        </svg>
-      </div>
-      <div class="nav-label">Install</div>
+      <div class="nav-label">Menu</div>
     </div>
   </nav>
 
@@ -849,7 +878,13 @@
         <button class="btn btn-primary btn-block" id="btn-perform-update" style="padding: 12px; font-weight: 700; font-size: 0.95rem;">
           ⚡ 1-Tap Live Update (Instant)
         </button>
-        <a href="https://github.com/FLAMEPOSEIDON/splitwise-p2p" target="_blank" class="btn btn-secondary btn-block" style="text-decoration: none; padding: 10px; font-size: 0.85rem;">
+        <button type="button" class="btn btn-secondary btn-block" id="btn-download-apk-update" onclick="window.AndroidBridge && window.AndroidBridge.installApkUpdate ? window.AndroidBridge.installApkUpdate('https://github.com/FLAMEPOSEIDON/splitwise-p2p/releases/latest/download/SplitwiseP2P.apk') : window.open('https://github.com/FLAMEPOSEIDON/splitwise-p2p/releases/latest/download/SplitwiseP2P.apk', '_blank')" style="padding: 10px; font-size: 0.85rem;">
+          📥 Download Latest APK
+        </button>
+        <button type="button" class="btn btn-secondary btn-block" id="btn-dismiss-update" onclick="dismissUpdate()" style="padding: 10px; font-size: 0.82rem; color: var(--text-muted);">
+          ✕ Dismiss / Mark as Installed
+        </button>
+        <a href="https://github.com/FLAMEPOSEIDON/splitwise-p2p" target="_blank" class="btn btn-secondary btn-block" style="text-decoration: none; padding: 10px; font-size: 0.82rem; color: var(--text-dim);">
           View Repository on GitHub
         </a>
       </div>

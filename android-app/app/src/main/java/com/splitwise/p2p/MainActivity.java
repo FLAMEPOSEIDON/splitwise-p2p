@@ -448,6 +448,17 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        if (multicastLock != null && !multicastLock.isHeld()) {
+            try { multicastLock.acquire(); } catch (Exception ignored) {}
+        }
+        if (syncService != null) syncService.broadcastSync();
+        if (nearbySyncService != null) nearbySyncService.broadcastSync();
+        notifyWebView("DATA_MERGED");
+    }
+
+    @Override
     protected void onDestroy() {
         super.onDestroy();
         if (syncService != null) syncService.stop();
@@ -526,10 +537,35 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
 
         @JavascriptInterface
         public String joinGroup(String groupId, String userName) {
-            dbHelper.joinGroupStub(groupId, deviceId, userName);
+            return joinGroupWithName(groupId, "", userName);
+        }
+
+        @JavascriptInterface
+        public String joinGroupWithName(String groupId, String groupName, String userName) {
+            dbHelper.joinGroup(groupId, groupName, deviceId, userName);
             if (syncService != null) syncService.broadcastSync();
             if (nearbySyncService != null) nearbySyncService.broadcastSync();
             return "{\"success\": true}";
+        }
+
+        @JavascriptInterface
+        public void syncNow() {
+            if (syncService != null) syncService.broadcastSync();
+            if (nearbySyncService != null) nearbySyncService.broadcastSync();
+            notifyWebView("DATA_MERGED");
+        }
+
+        @JavascriptInterface
+        public String getInstalledCommit() {
+            return getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString("splitwise_installed_commit", "");
+        }
+
+        @JavascriptInterface
+        public void setInstalledCommit(String sha) {
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .edit()
+                    .putString("splitwise_installed_commit", sha != null ? sha.trim() : "")
+                    .apply();
         }
 
         @JavascriptInterface
@@ -692,12 +728,14 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
             runOnUiThread(() -> {
                 try {
                     String groupId = null;
+                    String groupName = null;
                     String ip = null;
                     int port = P2pSyncService.SYNC_PORT;
 
                     if (raw.startsWith("splitwise://join")) {
                         android.net.Uri uri = android.net.Uri.parse(raw);
                         groupId = uri.getQueryParameter("gid");
+                        groupName = uri.getQueryParameter("name");
                         ip = uri.getQueryParameter("ip");
                         String pStr = uri.getQueryParameter("port");
                         if (pStr != null) {
@@ -706,6 +744,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                     } else if (raw.startsWith("{")) {
                         JSONObject obj = new JSONObject(raw);
                         groupId = obj.optString("gid", obj.optString("groupId", null));
+                        groupName = obj.optString("name", obj.optString("groupName", null));
                         ip = obj.optString("ip", obj.optString("host", null));
                         port = obj.optInt("port", P2pSyncService.SYNC_PORT);
                     } else {
@@ -713,7 +752,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                     }
 
                     if (groupId != null && !groupId.isEmpty()) {
-                        dbHelper.joinGroupStub(groupId, deviceId, deviceName);
+                        dbHelper.joinGroup(groupId, groupName, deviceId, deviceName);
                         if (ip != null && !ip.isEmpty()) {
                             syncService.connectToPeer(ip, port);
                         }
@@ -808,8 +847,27 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                 android.content.pm.PackageInfo pInfo = getPackageManager().getPackageInfo(getPackageName(), 0);
                 return pInfo.versionName;
             } catch (Exception e) {
-                return "1.2.1";
+                return "1.3.0";
             }
+        }
+
+        @JavascriptInterface
+        public String getInstalledCommit() {
+            return getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString("splitwise_installed_commit", "");
+        }
+
+        @JavascriptInterface
+        public void setInstalledCommit(String sha) {
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .edit()
+                    .putString("splitwise_installed_commit", sha != null ? sha.trim() : "")
+                    .apply();
+        }
+
+        @JavascriptInterface
+        public void syncNow() {
+            if (syncService != null) syncService.broadcastSync();
+            if (nearbySyncService != null) nearbySyncService.broadcastSync();
         }
 
         private InputStream openStreamWithRedirects(String initialUrl) throws Exception {
@@ -821,7 +879,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                 conn.setReadTimeout(30000);
                 conn.setInstanceFollowRedirects(true);
                 conn.setRequestProperty("User-Agent", "SplitwiseP2P-Android");
-                conn.setRequestProperty("Accept", "*/*");
+                conn.setRequestProperty("Accept", currentUrl.contains("api.github.com") ? "application/vnd.github.v3.raw" : "*/*");
                 String pat = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString("github_pat", null);
                 if (pat != null && !pat.trim().isEmpty()) {
                     conn.setRequestProperty("Authorization", "Bearer " + pat.trim());
@@ -862,8 +920,10 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                 try {
                     String[] baseUrls = {
                         "https://raw.githubusercontent.com/FLAMEPOSEIDON/splitwise-p2p/main/android-app/app/src/main/assets/www/",
-                        "https://cdn.jsdelivr.net/gh/FLAMEPOSEIDON/splitwise-p2p@main/android-app/app/src/main/assets/www/",
                         "https://raw.githubusercontent.com/FLAMEPOSEIDON/splitwise-p2p/main/public/",
+                        "https://api.github.com/repos/FLAMEPOSEIDON/splitwise-p2p/contents/android-app/app/src/main/assets/www/",
+                        "https://api.github.com/repos/FLAMEPOSEIDON/splitwise-p2p/contents/public/",
+                        "https://cdn.jsdelivr.net/gh/FLAMEPOSEIDON/splitwise-p2p@main/android-app/app/src/main/assets/www/",
                         "https://cdn.jsdelivr.net/gh/FLAMEPOSEIDON/splitwise-p2p@main/public/"
                     };
                     String[] files = {"index.html", "styles.css", "app.js", "qrcode.js"};
@@ -878,7 +938,7 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                     for (String baseUrl : baseUrls) {
                         boolean candidateSuccess = true;
                         for (String fName : files) {
-                            String fileUrl = baseUrl + fName + "?v=" + System.currentTimeMillis();
+                            String fileUrl = baseUrl + fName;
                             File tmp = new File(tempDir, fName);
                             try (InputStream in = openStreamWithRedirects(fileUrl);
                                  FileOutputStream out = new FileOutputStream(tmp)) {
@@ -914,15 +974,19 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
                         tmp.renameTo(target);
                     }
 
-                    if (commitSha != null && !commitSha.isEmpty()) {
+                    final String shaToSave = (commitSha != null && !commitSha.isEmpty()) ? commitSha : "";
+                    if (!shaToSave.isEmpty()) {
                         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                                 .edit()
-                                .putString("splitwise_installed_commit", commitSha)
+                                .putString("splitwise_installed_commit", shaToSave)
                                 .apply();
                     }
 
                     runOnUiThread(() -> {
                         Toast.makeText(MainActivity.this, "🎉 Update applied directly! App is restarting...", Toast.LENGTH_LONG).show();
+                        if (!shaToSave.isEmpty()) {
+                            webView.evaluateJavascript("localStorage.setItem('splitwise_installed_commit', '" + shaToSave + "');", null);
+                        }
                         webView.clearCache(true);
                         webView.reload();
                     });

@@ -658,14 +658,14 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 3px;
   color: var(--text-dim);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   font-weight: 600;
   text-decoration: none;
   cursor: pointer;
   flex: 1;
-  max-width: 68px;
+  max-width: 85px;
   padding: 4px 0;
   transition: color 0.2s;
 }
@@ -1777,4 +1777,284 @@ body {
 .nav-item:active {
   transform: scale(0.97);
   transition: transform 0.08s ease;
+}
+
+/* =============================================================
+   MENU VIEW & REDESIGNED MESH DISCOVER STYLING
+   ============================================================= */
+
+/* Menu Sub-Tab Navigation Bar */
+.menu-tabs-bar {
+  display: flex;
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 4px;
+  gap: 4px;
+  margin-bottom: 16px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.menu-tabs-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.menu-tab-btn {
+  flex: 1;
+  min-width: 80px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: center;
+  transition: all 0.2s ease;
+}
+
+.menu-tab-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.menu-tab-btn.active {
+  background: var(--primary);
+  color: #ffffff;
+  box-shadow: 0 2px 8px var(--primary-glow);
+}
+
+/* Redesigned Compact Mesh Status Card */
+.mesh-status-card {
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.95));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+.mesh-status-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  gap: 8px;
+}
+
+.mesh-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--primary);
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  border-radius: 20px;
+  padding: 4px 10px;
+}
+
+.mesh-status-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.8rem;
+  background: rgba(0, 0, 0, 0.28);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
+.mesh-stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.mesh-stat-label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.mesh-stat-val {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+.mesh-stat-val.highlight {
+  color: var(--cyan);
+  font-weight: 600;
+}
+
+/* Peer Count Badge */
+.peer-count-badge {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--primary);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: 12px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 1px 8px;
+}
+
+/* Redesigned Sleek Discovered Peer Card */
+.mesh-peer-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.mesh-peer-item:hover,
+.mesh-peer-item:active {
+  border-color: rgba(16, 185, 129, 0.5);
+  background: var(--bg-card-hover);
+}
+
+.peer-avatar-wrapper {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+}
+
+.peer-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--cyan), var(--primary));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+.peer-online-dot {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--primary);
+  border: 2px solid var(--bg-card);
+}
+
+.peer-online-dot.syncing {
+  background: var(--cyan);
+}
+
+.peer-info-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.peer-name {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.peer-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.peer-tech-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  background: rgba(6, 182, 212, 0.15);
+  color: var(--cyan);
+}
+
+.peer-tech-badge.wifi {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--primary);
+}
+
+.peer-actions-col {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.btn-peer-chat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 15px;
+  background: rgba(51, 65, 85, 0.8);
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-peer-chat:hover,
+.btn-peer-chat:active {
+  background: var(--primary);
+  color: white;
+  border-color: var(--primary);
+  transform: translateY(-1px);
+}
+
+/* Mesh Empty State */
+.mesh-empty-state {
+  background: var(--bg-card);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.mesh-radar-icon {
+  font-size: 2.2rem;
+  margin-bottom: 8px;
+  display: inline-block;
+}
+
+.mesh-empty-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.mesh-empty-sub {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  max-width: 320px;
+  margin: 0 auto;
 }

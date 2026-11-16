@@ -77,15 +77,29 @@ public class NearbySyncService {
         this.connectionsClient = Nearby.getConnectionsClient(this.context);
     }
 
+    private final Runnable heartbeatRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (isRunning) {
+                if (!connectedEndpoints.isEmpty()) {
+                    broadcastSync();
+                }
+                mainHandler.postDelayed(this, 5000);
+            }
+        }
+    };
+
     public synchronized void start() {
         if (isRunning) return;
         isRunning = true;
         startAdvertising();
         startDiscovery();
+        mainHandler.postDelayed(heartbeatRunnable, 5000);
     }
 
     public synchronized void stop() {
         isRunning = false;
+        mainHandler.removeCallbacks(heartbeatRunnable);
         try {
             connectionsClient.stopAdvertising();
             connectionsClient.stopDiscovery();
@@ -181,8 +195,13 @@ public class NearbySyncService {
             discoveredEndpoints.put(endpointId, cleanName);
             mainHandler.post(() -> listener.onPeerFound(endpointId, cleanName));
 
-            // Automatically request connection for hands-free mesh sync
-            if (!connectedEndpoints.containsKey(endpointId) && !pendingConnections.contains(endpointId)) {
+            // Deterministic initiator election to prevent simultaneous connection collision:
+            // When both devices discover each other at the same moment, having both call requestConnection
+            // causes Nearby Connections to reject/collide or wait for a 20-30s timeout.
+            // The device with the lexicographically higher deviceId initiates the request;
+            // the other device waits and auto-accepts in onConnectionInitiated.
+            boolean isInitiator = devId.isEmpty() || deviceId.compareTo(devId) > 0;
+            if (isInitiator && !connectedEndpoints.containsKey(endpointId) && !pendingConnections.contains(endpointId)) {
                 pendingConnections.add(endpointId);
                 connectionsClient.requestConnection(deviceName + "#" + deviceId, endpointId, connectionLifecycleCallback)
                         .addOnFailureListener(e -> {

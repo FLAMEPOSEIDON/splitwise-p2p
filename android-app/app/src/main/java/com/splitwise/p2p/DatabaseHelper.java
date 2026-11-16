@@ -333,21 +333,33 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         }
     }
 
-    public void joinGroupStub(String groupId, String deviceId, String yourName) {
+    public void joinGroup(String groupId, String groupName, String deviceId, String yourName) {
         SQLiteDatabase db = getWritableDatabase();
-        Cursor c = db.rawQuery("SELECT id FROM groups WHERE id = ?", new String[]{groupId});
+        Cursor c = db.rawQuery("SELECT id, name FROM groups WHERE id = ?", new String[]{groupId});
         boolean exists = c.moveToFirst();
+        String currentName = exists ? c.getString(1) : null;
         c.close();
+
+        String actualName = (groupName != null && !groupName.trim().isEmpty() && !groupName.equals("(syncing...)"))
+                ? groupName.trim() : (exists && currentName != null ? currentName : "(syncing...)");
 
         if (!exists) {
             ContentValues cv = new ContentValues();
             cv.put("id", groupId);
-            cv.put("name", "(syncing...)");
+            cv.put("name", actualName);
             cv.put("created_by", deviceId);
             cv.put("created_at", nowIso());
             db.insert("groups", null, cv);
+        } else if (currentName != null && currentName.equals("(syncing...)") && !actualName.equals("(syncing...)")) {
+            ContentValues cv = new ContentValues();
+            cv.put("name", actualName);
+            db.update("groups", cv, "id = ?", new String[]{groupId});
         }
         addMember(groupId, yourName, deviceId);
+    }
+
+    public void joinGroupStub(String groupId, String deviceId, String yourName) {
+        joinGroup(groupId, "", deviceId, yourName);
     }
 
     public void updateGroupInfo(String groupId, String name, String createdBy, String createdAt) {

@@ -17,6 +17,7 @@ import java.util.concurrent.*;
 public class P2pSyncService {
     public static final String SERVICE_TYPE = "_splitwisep2p._tcp";
     public static final int SYNC_PORT = 47811;
+    public static final int UDP_BEACON_PORT = 47812;
 
     public interface OnSyncListener {
         void onPeerFound(String name, String host, int port);
@@ -37,6 +38,7 @@ public class P2pSyncService {
     private NsdManager.DiscoveryListener discoveryListener;
 
     private ServerSocket serverSocket;
+    private DatagramSocket udpSocket;
     private final ExecutorService threadPool = Executors.newCachedThreadPool();
     private final Set<String> connectedPeers = Collections.synchronizedSet(new HashSet<>());
     private final Map<String, PeerInfo> discoveredPeers = new ConcurrentHashMap<>();
@@ -74,15 +76,97 @@ public class P2pSyncService {
         running = true;
         startServer();
         startNsd();
+        startUdpBeacon();
+        startHeartbeat();
     }
 
     public void stop() {
         running = false;
         stopNsd();
         try {
+            if (udpSocket != null) udpSocket.close();
+        } catch (Exception ignored) {}
+        try {
             if (serverSocket != null) serverSocket.close();
         } catch (Exception ignored) {}
         threadPool.shutdownNow();
+    }
+
+    private void startHeartbeat() {
+        threadPool.execute(() -> {
+            while (running) {
+                try {
+                    Thread.sleep(5000);
+                    if (running) {
+                        broadcastSync();
+                    }
+                } catch (Exception ignored) {}
+            }
+        });
+    }
+
+    private void startUdpBeacon() {
+        // 1. Broadcast presence every 3s on local subnet for sub-second discovery
+        threadPool.execute(() -> {
+            DatagramSocket sender = null;
+            try {
+                sender = new DatagramSocket();
+                sender.setBroadcast(true);
+                while (running) {
+                    try {
+                        String payload = "SW_BEACON:" + deviceId + ":" + deviceName + ":" + SYNC_PORT;
+                        byte[] data = payload.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        DatagramPacket packet = new DatagramPacket(data, data.length, 
+                                InetAddress.getByName("255.255.255.255"), UDP_BEACON_PORT);
+                        sender.send(packet);
+                    } catch (Exception ignored) {}
+                    Thread.sleep(3000);
+                }
+            } catch (Exception ignored) {
+            } finally {
+                if (sender != null) {
+                    try { sender.close(); } catch (Exception ignored) {}
+                }
+            }
+        });
+
+        // 2. Listen for UDP beacons on port 47812
+        threadPool.execute(() -> {
+            try {
+                udpSocket = new DatagramSocket(UDP_BEACON_PORT);
+                udpSocket.setBroadcast(true);
+                byte[] buffer = new byte[1024];
+                while (running) {
+                    try {
+                        DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                        udpSocket.receive(packet);
+                        String str = new String(packet.getData(), 0, packet.getLength(), java.nio.charset.StandardCharsets.UTF_8);
+                        if (str.startsWith("SW_BEACON:")) {
+                            String[] parts = str.split(":", 4);
+                            if (parts.length >= 4) {
+                                String remoteDevId = parts[1];
+                                String remoteDevName = parts[2];
+                                int remotePort = Integer.parseInt(parts[3]);
+                                String remoteHost = packet.getAddress().getHostAddress();
+
+                                if (remoteDevId != null && !remoteDevId.equals(deviceId)) {
+                                    if (!discoveredPeers.containsKey(remoteDevName)) {
+                                        discoveredPeers.put(remoteDevName, new PeerInfo(remoteDevName, remoteHost, remotePort, remoteDevId));
+                                        mainHandler.post(() -> listener.onPeerFound(remoteDevName, remoteHost, remotePort));
+                                    }
+                                    connectToPeer(remoteHost, remotePort);
+                                }
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
+            } catch (Exception ignored) {
+            } finally {
+                if (udpSocket != null) {
+                    try { udpSocket.close(); } catch (Exception ignored) {}
+                }
+            }
+        });
     }
 
     public List<PeerInfo> getDiscoveredPeers() {
