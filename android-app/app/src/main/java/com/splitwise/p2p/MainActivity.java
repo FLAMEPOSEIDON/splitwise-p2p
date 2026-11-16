@@ -851,25 +851,6 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
             }
         }
 
-        @JavascriptInterface
-        public String getInstalledCommit() {
-            return getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString("splitwise_installed_commit", "");
-        }
-
-        @JavascriptInterface
-        public void setInstalledCommit(String sha) {
-            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                    .edit()
-                    .putString("splitwise_installed_commit", sha != null ? sha.trim() : "")
-                    .apply();
-        }
-
-        @JavascriptInterface
-        public void syncNow() {
-            if (syncService != null) syncService.broadcastSync();
-            if (nearbySyncService != null) nearbySyncService.broadcastSync();
-        }
-
         private InputStream openStreamWithRedirects(String initialUrl) throws Exception {
             String currentUrl = initialUrl;
             for (int i = 0; i < 6; i++) {
