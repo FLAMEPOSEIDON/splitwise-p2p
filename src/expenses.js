@@ -143,6 +143,17 @@ function getMemberName(memberId) {
   }
 }
 
+function formatPayerNames(paidBy) {
+  if (!paidBy) return 'Someone';
+  if (typeof paidBy === 'string' && paidBy.startsWith('[')) {
+    try {
+      const arr = JSON.parse(paidBy);
+      return arr.map(p => `${getMemberName(p.memberId)} (₹${Number(p.amount).toFixed(2)})`).join(', ');
+    } catch (_) {}
+  }
+  return getMemberName(paidBy);
+}
+
 function getGroupName(groupId) {
   if (!groupId) return 'Group';
   try {
@@ -219,7 +230,7 @@ function addExpense(hlcClock, {
   // Record initial addition in activity log
   const isPayment = (category && category.toLowerCase() === 'payment') ||
     (description && description.toLowerCase().startsWith('payment:'));
-  const payerName = getMemberName(paidBy);
+  const payerName = formatPayerNames(paidBy);
   const gName = getGroupName(groupId);
   const amtStr = `₹${Number(amount).toFixed(2)}`;
   if (isPayment) {
@@ -237,7 +248,7 @@ function deleteExpense(hlcClock, expenseId) {
   try {
     const row = db.prepare('SELECT group_id, description, amount, paid_by FROM expenses WHERE id = ?').get(expenseId);
     if (row) {
-      const payerName = getMemberName(row.paid_by);
+      const payerName = formatPayerNames(row.paid_by);
       const gName = getGroupName(row.group_id);
       const amtStr = `₹${Number(row.amount).toFixed(2)}`;
       logActivity(row.group_id, 'EXPENSE_DELETED', '🗑️', `${payerName} deleted an expense`, `"${row.description}" (${amtStr}) in ${gName}`, null, 0, new Date().toISOString(), new Date().toISOString().split('T')[0]);
@@ -297,7 +308,7 @@ function updateExpense(hlcClock, expenseId, {
   );
 
   // 2. Log change details to activity_log
-  const payerName = getMemberName(paidBy);
+  const payerName = formatPayerNames(paidBy);
   const gName = getGroupName(oldGid);
   let changeDetails = 'Updated expense details';
   if (Math.abs(oldAmt - amount) > 0.001 && oldDesc !== description) {
@@ -350,8 +361,25 @@ function computeBalances(groupId) {
     const split = exp.split_between || [];
     if (split.length === 0) continue;
 
-    // Credit payer
-    balances[exp.paid_by] = (balances[exp.paid_by] || 0) + exp.amount;
+    // Credit payer(s)
+    let paidByList = null;
+    if (typeof exp.paid_by === 'string' && exp.paid_by.startsWith('[')) {
+      try {
+        paidByList = JSON.parse(exp.paid_by);
+      } catch (_) {}
+    } else if (Array.isArray(exp.paid_by)) {
+      paidByList = exp.paid_by;
+    }
+
+    if (Array.isArray(paidByList)) {
+      for (const p of paidByList) {
+        if (p && p.memberId) {
+          balances[p.memberId] = (balances[p.memberId] || 0) + (Number(p.amount) || 0);
+        }
+      }
+    } else {
+      balances[exp.paid_by] = (balances[exp.paid_by] || 0) + exp.amount;
+    }
 
     // Check if custom shares are used
     let hasCustomShares = false;
@@ -434,7 +462,7 @@ function settleDebt(hlcClock, { groupId, payerMemberId, receiverMemberId, amount
   const payerName = payer ? payer.name : 'Payer';
   const receiverName = receiver ? receiver.name : 'Receiver';
 
-  const description = `${payerName} paid ${receiverName}`;
+  const description = `Payment: ${payerName} paid ${receiverName}`;
   return addExpense(hlcClock, {
     groupId,
     description,
@@ -845,7 +873,21 @@ function addMessage(groupId, senderDeviceId, senderName, text, hlcClock) {
   return { id, group_id: groupId, sender_device_id: senderDeviceId, sender_name: senderName, text, timestamp: now, hlc };
 }
 
+function clearChatLocally(groupId) {
+  if (!groupId) return;
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT OR REPLACE INTO chat_clear_state (group_id, cleared_at)
+    VALUES (?, ?)
+  `).run(groupId, now);
+  db.prepare(`DELETE FROM messages WHERE group_id = ? AND timestamp <= ?`).run(groupId, now);
+}
+
 function listMessages(groupId) {
+  const clearState = db.prepare(`SELECT cleared_at FROM chat_clear_state WHERE group_id = ?`).get(groupId);
+  if (clearState && clearState.cleared_at) {
+    return db.prepare(`SELECT * FROM messages WHERE group_id = ? AND timestamp > ? ORDER BY timestamp ASC`).all(groupId, clearState.cleared_at);
+  }
   return db.prepare(`SELECT * FROM messages WHERE group_id = ? ORDER BY timestamp ASC`).all(groupId);
 }
 
@@ -888,6 +930,7 @@ module.exports = {
   getActivityFeed,
   addMessage,
   listMessages,
+  clearChatLocally,
   addPendingInvite,
   listPendingInvites,
   dismissInvite,

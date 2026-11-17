@@ -515,6 +515,16 @@ class WebServer {
       return;
     }
 
+    // POST /api/groups/:id/messages/clear
+    const clearMessagesMatch = pathname.match(/^\/api\/groups\/([a-zA-Z0-9_-]+)\/messages\/clear$/);
+    if (clearMessagesMatch && req.method === 'POST') {
+      const convId = clearMessagesMatch[1];
+      expenses.clearChatLocally(convId);
+      this.broadcastUpdate('CHAT_CLEARED', { groupId: convId });
+      sendJson(200, { success: true });
+      return;
+    }
+
     // GET /api/invites
     if (pathname === '/api/invites' && req.method === 'GET') {
       sendJson(200, expenses.listPendingInvites());

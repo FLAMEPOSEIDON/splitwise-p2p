@@ -941,6 +941,72 @@ body {
   color: var(--primary);
 }
 
+/* Payer Mode Toggle & Multi-Payer Styles */
+.payer-mode-toggle {
+  display: flex;
+  gap: 6px;
+}
+
+.payer-mode-btn {
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.2s;
+}
+
+.payer-mode-btn:hover {
+  background: var(--bg-card-hover);
+  color: var(--text);
+}
+
+.payer-mode-btn.active {
+  border-color: var(--primary);
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--primary);
+}
+
+.multi-payer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+}
+
+.multi-payer-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.multi-payer-input {
+  width: 95px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 0.85rem;
+  text-align: right;
+  outline: none;
+  font-family: monospace;
+}
+
+.multi-payer-input:focus {
+  border-color: var(--primary);
+}
+
 /* Custom Split Rows */
 .split-mode-toggle {
   display: flex;

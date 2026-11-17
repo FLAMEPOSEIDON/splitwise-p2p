@@ -144,6 +144,9 @@
           <button class="btn btn-secondary btn-sm" id="btn-chat-view-group-ledger" style="display: none;" title="Open Group Ledger">
             📊 Ledger
           </button>
+          <button class="btn btn-secondary btn-sm" id="btn-chat-clear-messages" onclick="handleClearCurrentChat()" title="Clear Chat for this device only" style="display: none; color: var(--danger); border-color: rgba(239, 68, 68, 0.4);">
+            🗑️ Clear
+          </button>
           <button class="btn btn-secondary btn-sm" id="btn-chat-scan-nearby" onclick="switchView('view-network')" title="Scan Nearby Friends">
             📡 Scan
           </button>
@@ -303,6 +306,11 @@
 
       <!-- Tab Content: Chat -->
       <div id="tab-content-chat" style="display: none;">
+        <div class="chat-tab-header-actions" style="display: flex; justify-content: flex-end; padding: 4px 8px; margin-bottom: 6px;">
+          <button class="btn btn-secondary btn-sm" onclick="handleClearCurrentChat()" style="font-size: 0.75rem; color: var(--danger); border-color: rgba(239, 68, 68, 0.35); padding: 3px 10px;">
+            🗑️ Clear Chat
+          </button>
+        </div>
         <div class="chat-wrapper">
           <div class="chat-messages-container" id="chat-messages-container">
             <div class="chat-empty-hint">
@@ -604,25 +612,57 @@
           </div>
         </div>
 
-        <div style="display: flex; gap: 10px;">
-          <div class="form-group" style="flex: 1;">
-            <label class="form-label">Category</label>
-            <select class="form-select" id="exp-category">
-              <option value="General">🧾 General</option>
-              <option value="Payment">🤝 Payment / Settlement</option>
-              <option value="Groceries">🥦 Groceries</option>
-              <option value="Dining out">🍔 Dining out</option>
-              <option value="Rent">🏠 Rent</option>
-              <option value="Household supplies">🧻 Household supplies</option>
-              <option value="Cleaning">🧹 Cleaning</option>
-              <option value="Utilities">💡 Utilities</option>
-              <option value="Transportation">🚗 Transportation</option>
-              <option value="Entertainment">🎬 Entertainment</option>
-            </select>
+        <div class="form-group">
+          <label class="form-label">Category</label>
+          <select class="form-select" id="exp-category">
+            <option value="General">🧾 General</option>
+            <option value="Payment">🤝 Payment / Settlement</option>
+            <option value="Groceries">🥦 Groceries</option>
+            <option value="Dining out">🍔 Dining out</option>
+            <option value="Rent">🏠 Rent</option>
+            <option value="Household supplies">🧻 Household supplies</option>
+            <option value="Cleaning">🧹 Cleaning</option>
+            <option value="Utilities">💡 Utilities</option>
+            <option value="Transportation">🚗 Transportation</option>
+            <option value="Entertainment">🎬 Entertainment</option>
+          </select>
+        </div>
+
+        <div class="form-group" id="group-paid-by-section">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <label class="form-label" id="exp-paid-by-label" style="margin-bottom: 0;">Paid by</label>
+            <div class="payer-mode-toggle">
+              <button type="button" class="payer-mode-btn active" id="btn-payer-single">Single Person</button>
+              <button type="button" class="payer-mode-btn" id="btn-payer-multi">Multiple People</button>
+            </div>
           </div>
-          <div class="form-group" style="flex: 1;">
-            <label class="form-label" id="exp-paid-by-label">Paid by</label>
-            <select class="form-select" id="exp-paid-by" required></select>
+          
+          <!-- Single Payer Dropdown -->
+          <div id="single-payer-container">
+            <select class="form-select" id="exp-paid-by"></select>
+          </div>
+
+          <!-- Multiple Payers Container -->
+          <div id="multi-payer-container" style="display: none; margin-top: 8px;">
+            <div class="split-math-bar" id="payer-math-bar">
+              <div class="split-math-item">
+                <span class="split-math-label">Total Expense</span>
+                <span class="split-math-val" id="payer-math-total">₹0.00</span>
+              </div>
+              <div class="split-math-item">
+                <span class="split-math-label">Paid so far</span>
+                <span class="split-math-val" id="payer-math-allocated">₹0.00</span>
+              </div>
+              <div class="split-math-item">
+                <span class="split-math-label">Remaining</span>
+                <span class="split-math-val" id="payer-math-remaining">₹0.00</span>
+              </div>
+            </div>
+            <div class="split-math-actions">
+              <button type="button" class="btn-xs" id="btn-auto-fill-payer-remaining">⚡ Fill remaining</button>
+              <button type="button" class="btn-xs" id="btn-reset-equal-payers">🔄 Split paid equally</button>
+            </div>
+            <div id="multi-payer-inputs" style="margin-top: 8px;"></div>
           </div>
         </div>
 

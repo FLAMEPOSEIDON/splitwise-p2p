@@ -773,6 +773,12 @@ public class MainActivity extends Activity implements P2pSyncService.OnSyncListe
         }
 
         @JavascriptInterface
+        public void clearChat(String groupId) {
+            dbHelper.clearChatLocally(groupId);
+            notifyWebView("DATA_MERGED");
+        }
+
+        @JavascriptInterface
         public String getPendingInvites() {
             return dbHelper.listPendingInvites().toString();
         }

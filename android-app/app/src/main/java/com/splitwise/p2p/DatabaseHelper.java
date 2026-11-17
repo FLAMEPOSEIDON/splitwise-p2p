@@ -88,6 +88,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     "inviter_device_id TEXT NOT NULL, " +
                     "received_at TEXT NOT NULL, " +
                     "status TEXT DEFAULT 'PENDING');");
+            db.execSQL("CREATE TABLE IF NOT EXISTS chat_clear_state (" +
+                    "group_id TEXT PRIMARY KEY, " +
+                    "cleared_at TEXT NOT NULL);");
         } catch (Exception ignored) {}
     }
 
@@ -155,6 +158,26 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             }
         } catch (Exception ignored) {}
         return name;
+    }
+
+    public String formatPayerNames(String paidBy) {
+        if (paidBy == null || paidBy.isEmpty()) return "Someone";
+        if (paidBy.startsWith("[")) {
+            try {
+                JSONArray arr = new JSONArray(paidBy);
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < arr.length(); i++) {
+                    JSONObject p = arr.getJSONObject(i);
+                    String mId = p.getString("memberId");
+                    double amt = p.optDouble("amount", 0.0);
+                    String name = getMemberName(mId);
+                    if (sb.length() > 0) sb.append(", ");
+                    sb.append(name).append(" (₹").append(String.format(Locale.US, "%.2f", amt)).append(")");
+                }
+                return sb.toString();
+            } catch (Exception ignored) {}
+        }
+        return getMemberName(paidBy);
     }
 
     public static String getDirectChatId(String dev1, String dev2) {
@@ -615,11 +638,16 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         db.insert("expenses", null, cv);
 
         // Record initial addition in activity log
-        String payerName = getMemberName(paidBy);
+        String payerName = formatPayerNames(paidBy);
         String gName = getGroupName(groupId);
         String icon = getCategoryIcon(cat);
         String amtStr = "₹" + String.format(Locale.US, "%.2f", amount);
-        logActivity(groupId, "EXPENSE_ADDED", icon, payerName + " added \"" + desc + "\"", "in " + gName + " • " + cat, amtStr, amount, nowIso(), expDate);
+        boolean isPay = cat.equalsIgnoreCase("Payment") || desc.toLowerCase().startsWith("payment");
+        if (isPay) {
+            logActivity(groupId, "PAYMENT_RECORDED", "🤝", payerName + " recorded payment", "\"" + desc + "\" (" + amtStr + ") in " + gName, amtStr, amount, nowIso(), expDate);
+        } else {
+            logActivity(groupId, "EXPENSE_ADDED", icon, payerName + " added \"" + desc + "\"", "in " + gName + " • " + cat, amtStr, amount, nowIso(), expDate);
+        }
 
         try {
             JSONObject exp = new JSONObject();
@@ -648,7 +676,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             String gid = c.getString(0);
             String desc = c.getString(1);
             double amt = c.getDouble(2);
-            String payer = getMemberName(c.getString(3));
+            String payer = formatPayerNames(c.getString(3));
             String gName = getGroupName(gid);
             logActivity(gid, "EXPENSE_DELETED", "🗑️", payer + " deleted an expense", "\"" + desc + "\" (₹" + String.format(Locale.US, "%.2f", amt) + ") in " + gName, null, 0, nowIso(), todayDate());
         }
@@ -690,7 +718,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         db.update("expenses", cv, "id = ?", new String[]{expenseId});
 
         // 3. Log the change to Activity Feed history (e.g. "Changed amount from ₹100.00 to ₹150.00")
-        String payerName = getMemberName(paidBy);
+        String payerName = formatPayerNames(paidBy);
         String gName = getGroupName(oldGid);
         String changeDetails;
         if (Math.abs(oldAmt - amount) > 0.001 && !oldDesc.equals(desc)) {
@@ -776,7 +804,21 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 JSONArray split = exp.getJSONArray("split_between");
                 if (split.length() == 0) continue;
 
-                balances.put(paidBy, balances.getOrDefault(paidBy, 0.0) + amount);
+                if (paidBy.startsWith("[")) {
+                    try {
+                        JSONArray payersArr = new JSONArray(paidBy);
+                        for (int p = 0; p < payersArr.length(); p++) {
+                            JSONObject payerObj = payersArr.getJSONObject(p);
+                            String pId = payerObj.getString("memberId");
+                            double pAmt = payerObj.getDouble("amount");
+                            balances.put(pId, balances.getOrDefault(pId, 0.0) + pAmt);
+                        }
+                    } catch (Exception e) {
+                        balances.put(paidBy, balances.getOrDefault(paidBy, 0.0) + amount);
+                    }
+                } else {
+                    balances.put(paidBy, balances.getOrDefault(paidBy, 0.0) + amount);
+                }
 
                 boolean hasCustomShares = false;
                 for (int j = 0; j < split.length(); j++) {
@@ -864,7 +906,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public JSONObject settleDebt(HlcClock clock, String groupId, String payerId, String receiverId, double amount, String deviceId) {
         JSONArray split = new JSONArray();
         split.put(receiverId);
-        return addExpense(clock, groupId, "Payment settlement", amount, payerId, split, "Payment", todayDate(), deviceId);
+        String payerName = getMemberName(payerId);
+        String receiverName = getMemberName(receiverId);
+        String desc = "Payment: " + payerName + " paid " + receiverName;
+        return addExpense(clock, groupId, desc, amount, payerId, split, "Payment", todayDate(), deviceId);
     }
 
     // --- CSV Import & Export ---
@@ -1062,7 +1107,19 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 for (int m = 0; m < members.length(); m++) {
                     String memId = members.getJSONObject(m).getString("id");
                     double val = 0.0;
-                    if (paidBy.equals(memId)) val += amt;
+                    if (paidBy.startsWith("[")) {
+                        try {
+                            JSONArray payersArr = new JSONArray(paidBy);
+                            for (int p = 0; p < payersArr.length(); p++) {
+                                JSONObject payerObj = payersArr.getJSONObject(p);
+                                if (payerObj.getString("memberId").equals(memId)) {
+                                    val += payerObj.getDouble("amount");
+                                }
+                            }
+                        } catch (Exception ignored) {}
+                    } else if (paidBy.equals(memId)) {
+                        val += amt;
+                    }
 
                     for (int s = 0; s < split.length(); s++) {
                         JSONObject obj = split.optJSONObject(s);
@@ -1258,7 +1315,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 String eGid = bCur.getString(1);
                 String eDesc = bCur.getString(2);
                 double eAmt = bCur.getDouble(3);
-                String ePayer = memberMap.getOrDefault(bCur.getString(4), "Someone");
+                String ePayer = formatPayerNames(bCur.getString(4));
                 String eCat = bCur.getString(5);
                 String eDate = bCur.getString(6);
                 String eHlc = bCur.getString(7);
@@ -1431,11 +1488,39 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         }
     }
 
+    public void clearChatLocally(String groupId) {
+        if (groupId == null || groupId.isEmpty()) return;
+        SQLiteDatabase db = getWritableDatabase();
+        ensureChatAndInviteTables(db);
+        String now = nowIso();
+        ContentValues cv = new ContentValues();
+        cv.put("group_id", groupId);
+        cv.put("cleared_at", now);
+        db.insertWithOnConflict("chat_clear_state", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+        db.delete("messages", "group_id = ? AND timestamp <= ?", new String[]{groupId, now});
+    }
+
+    public String getChatClearedAt(SQLiteDatabase db, String groupId) {
+        if (groupId == null || groupId.isEmpty()) return null;
+        String clearedAt = null;
+        try (Cursor c = db.rawQuery("SELECT cleared_at FROM chat_clear_state WHERE group_id = ?", new String[]{groupId})) {
+            if (c.moveToFirst()) {
+                clearedAt = c.getString(0);
+            }
+        } catch (Exception ignored) {}
+        return clearedAt;
+    }
+
     public JSONArray listMessages(String groupId) {
         SQLiteDatabase db = getReadableDatabase();
         ensureChatAndInviteTables(db);
         JSONArray arr = new JSONArray();
-        Cursor c = db.rawQuery("SELECT * FROM messages WHERE group_id = ? ORDER BY timestamp ASC", new String[]{groupId});
+        String clearedAt = getChatClearedAt(db, groupId);
+        String sql = (clearedAt != null)
+                ? "SELECT * FROM messages WHERE group_id = ? AND timestamp > ? ORDER BY timestamp ASC"
+                : "SELECT * FROM messages WHERE group_id = ? ORDER BY timestamp ASC";
+        String[] args = (clearedAt != null) ? new String[]{groupId, clearedAt} : new String[]{groupId};
+        Cursor c = db.rawQuery(sql, args);
         try {
             while (c.moveToNext()) {
                 JSONObject m = new JSONObject();
@@ -1459,6 +1544,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         if (messagesArr == null || messagesArr.length() == 0) return 0;
         SQLiteDatabase db = getWritableDatabase();
         ensureChatAndInviteTables(db);
+        String clearedAt = getChatClearedAt(db, groupId);
         int merged = 0;
         db.beginTransaction();
         try {
@@ -1467,8 +1553,13 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     JSONObject m = messagesArr.getJSONObject(i);
                     String id = m.getString("id");
                     String hlc = m.getString("hlc");
+                    String ts = m.optString("timestamp", nowIso());
 
                     clock.update(hlc);
+
+                    if (clearedAt != null && ts.compareTo(clearedAt) <= 0) {
+                        continue;
+                    }
 
                     boolean exists = false;
                     try (Cursor c = db.rawQuery("SELECT id FROM messages WHERE id = ?", new String[]{id})) {
@@ -1482,7 +1573,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                         cv.put("sender_device_id", m.getString("sender_device_id"));
                         cv.put("sender_name", m.getString("sender_name"));
                         cv.put("text", m.getString("text"));
-                        cv.put("timestamp", m.optString("timestamp", nowIso()));
+                        cv.put("timestamp", ts);
                         cv.put("hlc", hlc);
                         db.insert("messages", null, cv);
                         merged++;

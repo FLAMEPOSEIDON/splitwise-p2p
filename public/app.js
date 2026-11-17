@@ -30,6 +30,7 @@ const state = {
   categoryFilter: 'ALL',
   searchQuery: '',
   splitMode: 'EQUAL', // 'EQUAL' or 'CUSTOM'
+  payerMode: 'SINGLE', // 'SINGLE' or 'MULTI'
   activeActivityGroupFilter: 'ALL',
   latestUpdateData: null,
 };
@@ -186,6 +187,16 @@ const el = {
   expCategory: document.getElementById('exp-category'),
   expPaidByLabel: document.getElementById('exp-paid-by-label'),
   expPaidBy: document.getElementById('exp-paid-by'),
+  btnPayerSingle: document.getElementById('btn-payer-single'),
+  btnPayerMulti: document.getElementById('btn-payer-multi'),
+  singlePayerContainer: document.getElementById('single-payer-container'),
+  multiPayerContainer: document.getElementById('multi-payer-container'),
+  multiPayerInputs: document.getElementById('multi-payer-inputs'),
+  payerMathTotal: document.getElementById('payer-math-total'),
+  payerMathAllocated: document.getElementById('payer-math-allocated'),
+  payerMathRemaining: document.getElementById('payer-math-remaining'),
+  btnAutoFillPayerRemaining: document.getElementById('btn-auto-fill-payer-remaining'),
+  btnResetEqualPayers: document.getElementById('btn-reset-equal-payers'),
   groupSplitMethod: document.getElementById('group-split-method'),
   expSplitCheckboxes: document.getElementById('exp-split-checkboxes'),
   expCustomSplitContainer: document.getElementById('exp-custom-split-container'),
@@ -612,6 +623,13 @@ async function fetchApi(endpoint, options = {}) {
       if (matchMessages && options.method === 'POST') {
         const body = JSON.parse(options.body || '{}');
         return JSON.parse(window.AndroidBridge.sendMessage(matchMessages[1], body.text || ''));
+      }
+      const matchClearMessages = endpoint.match(/^\/api\/groups\/([a-zA-Z0-9_-]+)\/messages\/clear$/);
+      if (matchClearMessages && options.method === 'POST') {
+        if (typeof window.AndroidBridge.clearChat === 'function') {
+          window.AndroidBridge.clearChat(matchClearMessages[1]);
+        }
+        return { success: true };
       }
       if (endpoint === '/api/invites' && (!options.method || options.method === 'GET')) {
         return JSON.parse(window.AndroidBridge.getPendingInvites() || '[]');
@@ -1340,10 +1358,18 @@ function renderExpensesList(expenses, members) {
   if (state.searchQuery.trim().length > 0) {
     const q = state.searchQuery.toLowerCase();
     activeExpenses = activeExpenses.filter((e) => {
-      const payerName = (memberMap[e.paid_by] || '').toLowerCase();
+      let pText = '';
+      if (typeof e.paid_by === 'string' && e.paid_by.startsWith('[')) {
+        try {
+          const arr = JSON.parse(e.paid_by);
+          pText = arr.map(p => memberMap[p.memberId] || '').join(' ');
+        } catch (_) {}
+      } else {
+        pText = memberMap[e.paid_by] || '';
+      }
       const desc = (e.description || '').toLowerCase();
       const cat = (e.category || '').toLowerCase();
-      return desc.includes(q) || payerName.includes(q) || cat.includes(q);
+      return desc.includes(q) || pText.toLowerCase().includes(q) || cat.includes(q);
     });
   }
 
@@ -1360,10 +1386,27 @@ function renderExpensesList(expenses, members) {
 
   el.expensesListContainer.innerHTML = activeExpenses
     .map((e) => {
-      const payerName = memberMap[e.paid_by] || 'Someone';
-      const cat = e.category || (e.description.startsWith('Payment:') ? 'Payment' : 'General');
-      const icon = CATEGORY_ICONS[cat] || '🧾';
+      let payerText = '';
+      if (typeof e.paid_by === 'string' && e.paid_by.startsWith('[')) {
+        try {
+          const payers = JSON.parse(e.paid_by);
+          const parts = payers.map(p => `${memberMap[p.memberId] || 'Someone'} (${formatMoney(p.amount)})`);
+          payerText = parts.join(', ');
+        } catch (_) {
+          payerText = memberMap[e.paid_by] || 'Someone';
+        }
+      } else {
+        payerText = memberMap[e.paid_by] || 'Someone';
+      }
+
+      const isPayment = (e.category || '').toLowerCase() === 'payment' || (e.description || '').toLowerCase().startsWith('payment:');
+      const cat = isPayment ? 'Payment' : (e.category || 'General');
+      const icon = isPayment ? '🤝' : (CATEGORY_ICONS[cat] || '🧾');
       const formattedDate = formatDate(e.date);
+
+      const paidSub = isPayment
+        ? `Settled ${formatMoney(e.amount)}`
+        : `${escapeHtml(payerText)} paid ${formatMoney(e.amount)}`;
 
       return `
       <div class="expense-item">
@@ -1372,7 +1415,7 @@ function renderExpensesList(expenses, members) {
           <div>
             <div class="expense-title">${escapeHtml(e.description)}</div>
             <div class="expense-sub">
-              ${escapeHtml(payerName)} paid ${formatMoney(e.amount)}
+              ${paidSub}
               ${formattedDate ? ` • <span class="expense-date">${formattedDate}</span>` : ''}
               <span class="cat-badge">${icon} ${escapeHtml(cat)}</span>
             </div>
@@ -1546,6 +1589,7 @@ function renderGroupQrCode(group) {
 
 function setupAddExpenseModal() {
   state.editingExpenseId = null;
+  state.payerMode = 'SINGLE';
   const data = state.currentGroupData;
   if (!data || !data.members) return;
 
@@ -1573,6 +1617,9 @@ function setupAddExpenseModal() {
     const me = data.members.find((m) => m.device_id === state.info.deviceId);
     if (me) el.expPaidBy.value = me.id;
   }
+
+  if (el.multiPayerInputs) el.multiPayerInputs.innerHTML = '';
+  updatePayerModeUI();
 
   el.expSplitCheckboxes.innerHTML = data.members
     .map(
@@ -1622,7 +1669,26 @@ function openEditExpenseModal(expenseId) {
     })
     .join('');
 
-  el.expPaidBy.value = expense.paid_by;
+  if (el.multiPayerInputs) el.multiPayerInputs.innerHTML = '';
+  if (typeof expense.paid_by === 'string' && expense.paid_by.startsWith('[')) {
+    state.payerMode = 'MULTI';
+    updatePayerModeUI();
+    try {
+      const payers = JSON.parse(expense.paid_by);
+      (data.members || []).forEach((m) => {
+        const inp = document.getElementById(`multi-payer-${m.id}`);
+        const found = payers.find((p) => p.memberId === m.id);
+        if (inp) {
+          inp.value = found ? Number(found.amount).toFixed(2) : '0.00';
+        }
+      });
+    } catch (_) {}
+    updatePayerMath();
+  } else {
+    state.payerMode = 'SINGLE';
+    el.expPaidBy.value = expense.paid_by;
+    updatePayerModeUI();
+  }
 
   // Determine split mode & prefill
   const split = expense.split_between || [];
@@ -1656,6 +1722,122 @@ function openEditExpenseModal(expenseId) {
   }
 
   openModal('modal-add-expense');
+}
+
+function updatePayerModeUI() {
+  if (state.payerMode === 'SINGLE') {
+    if (el.btnPayerSingle) el.btnPayerSingle.classList.add('active');
+    if (el.btnPayerMulti) el.btnPayerMulti.classList.remove('active');
+    if (el.singlePayerContainer) el.singlePayerContainer.style.display = 'block';
+    if (el.multiPayerContainer) el.multiPayerContainer.style.display = 'none';
+  } else {
+    if (el.btnPayerSingle) el.btnPayerSingle.classList.remove('active');
+    if (el.btnPayerMulti) el.btnPayerMulti.classList.add('active');
+    if (el.singlePayerContainer) el.singlePayerContainer.style.display = 'none';
+    if (el.multiPayerContainer) el.multiPayerContainer.style.display = 'block';
+
+    const members = (state.currentGroupData && state.currentGroupData.members) || [];
+    const total = parseFloat(el.expAmount.value) || 0;
+    const myDeviceId = state.info && state.info.deviceId;
+    const myDevName = state.info && state.info.deviceName;
+
+    if (el.multiPayerInputs && el.multiPayerInputs.children.length === 0) {
+      el.multiPayerInputs.innerHTML = members
+        .map((m, idx) => {
+          const isMe = myDeviceId && m.device_id === myDeviceId;
+          const displayName = isMe && myDevName ? myDevName : m.name;
+          const initialVal = (idx === 0) ? total.toFixed(2) : '0.00';
+          return `
+            <div class="multi-payer-row">
+              <span class="multi-payer-name">${escapeHtml(displayName)}${isMe ? ' (You)' : ''}</span>
+              <input type="number" step="0.01" min="0" class="multi-payer-input" id="multi-payer-${m.id}" value="${initialVal}">
+            </div>
+          `;
+        })
+        .join('');
+
+      el.multiPayerInputs.querySelectorAll('input').forEach((inp) => {
+        inp.addEventListener('input', updatePayerMath);
+      });
+    }
+    updatePayerMath();
+  }
+}
+
+function updatePayerMath() {
+  if (state.payerMode !== 'MULTI') return;
+  const total = parseFloat(el.expAmount.value) || 0;
+  const inputs = el.multiPayerInputs ? el.multiPayerInputs.querySelectorAll('input') : [];
+  let allocated = 0;
+  inputs.forEach((inp) => {
+    allocated += parseFloat(inp.value) || 0;
+  });
+  allocated = Math.round(allocated * 100) / 100;
+  const remaining = Math.round((total - allocated) * 100) / 100;
+
+  if (el.payerMathTotal) el.payerMathTotal.textContent = formatMoney(total);
+  if (el.payerMathAllocated) el.payerMathAllocated.textContent = formatMoney(allocated);
+  if (el.payerMathRemaining) {
+    if (Math.abs(remaining) < 0.01) {
+      el.payerMathRemaining.textContent = '₹0.00 (Balanced ✅)';
+      el.payerMathRemaining.className = 'split-math-val balanced';
+    } else if (remaining > 0) {
+      el.payerMathRemaining.textContent = `+${formatMoney(remaining)} left`;
+      el.payerMathRemaining.className = 'split-math-val under';
+    } else {
+      el.payerMathRemaining.textContent = `-${formatMoney(Math.abs(remaining))} over`;
+      el.payerMathRemaining.className = 'split-math-val over';
+    }
+  }
+}
+
+function autoFillPayerRemaining() {
+  const total = parseFloat(el.expAmount.value) || 0;
+  const inputs = el.multiPayerInputs ? Array.from(el.multiPayerInputs.querySelectorAll('input')) : [];
+  if (inputs.length === 0) return;
+
+  let allocated = 0;
+  inputs.forEach((inp) => {
+    allocated += parseFloat(inp.value) || 0;
+  });
+  const remaining = Math.round((total - allocated) * 100) / 100;
+
+  if (Math.abs(remaining) < 0.01) {
+    showToast('Paid amounts are already balanced!');
+    return;
+  }
+
+  const members = (state.currentGroupData && state.currentGroupData.members) || [];
+  const myDeviceId = state.info && state.info.deviceId;
+  const me = members.find((m) => m.device_id === myDeviceId);
+  let targetInput = inputs[0];
+  if (me) {
+    const myInp = document.getElementById(`multi-payer-${me.id}`);
+    if (myInp) targetInput = myInp;
+  }
+
+  const currentVal = parseFloat(targetInput.value) || 0;
+  const newVal = Math.max(0, Math.round((currentVal + remaining) * 100) / 100);
+  targetInput.value = newVal.toFixed(2);
+  updatePayerMath();
+}
+
+function resetEqualPayers() {
+  const members = (state.currentGroupData && state.currentGroupData.members) || [];
+  const total = parseFloat(el.expAmount.value) || 0;
+  if (members.length === 0) return;
+
+  const shareEach = Math.floor((total / members.length) * 100) / 100;
+  const remainder = Math.round((total - shareEach * members.length) * 100) / 100;
+
+  members.forEach((m, idx) => {
+    const inp = document.getElementById(`multi-payer-${m.id}`);
+    if (inp) {
+      const val = idx === 0 ? shareEach + remainder : shareEach;
+      inp.value = val.toFixed(2);
+    }
+  });
+  updatePayerMath();
 }
 
 function updateSplitMath() {
@@ -1762,6 +1944,19 @@ function updateSplitModeUI() {
   }
 }
 
+safeOn(el.btnPayerSingle, 'click', () => {
+  state.payerMode = 'SINGLE';
+  updatePayerModeUI();
+});
+
+safeOn(el.btnPayerMulti, 'click', () => {
+  state.payerMode = 'MULTI';
+  updatePayerModeUI();
+});
+
+safeOn(el.btnAutoFillPayerRemaining, 'click', autoFillPayerRemaining);
+safeOn(el.btnResetEqualPayers, 'click', resetEqualPayers);
+
 safeOn(el.btnSplitEqual, 'click', () => {
   state.splitMode = 'EQUAL';
   updateSplitModeUI();
@@ -1774,6 +1969,7 @@ safeOn(el.btnSplitCustom, 'click', () => {
 
 safeOn(el.expAmount, 'input', () => {
   if (state.splitMode === 'CUSTOM') updateSplitMath();
+  if (state.payerMode === 'MULTI') updatePayerMath();
 });
 
 safeOn(el.btnAutoSplitRemaining, 'click', autoSplitRemaining);
@@ -1787,7 +1983,58 @@ safeOn(el.formAddExpense, 'submit', async (e) => {
   const amount = parseFloat(el.expAmount.value);
   const date = el.expDate.value;
   const category = el.expCategory.value;
-  const paidBy = el.expPaidBy.value;
+
+  if (!description) {
+    showToast('Please enter an expense description');
+    return;
+  }
+  if (isNaN(amount) || amount <= 0) {
+    showToast('Please enter a valid amount greater than ₹0');
+    return;
+  }
+
+  let paidBy = '';
+  if (state.payerMode === 'MULTI') {
+    const members = (state.currentGroupData && state.currentGroupData.members) || [];
+    let allocatedTotal = 0;
+    const payers = [];
+    members.forEach((m) => {
+      const inp = document.getElementById(`multi-payer-${m.id}`);
+      const val = parseFloat(inp ? inp.value : 0) || 0;
+      if (val > 0.001) {
+        payers.push({ memberId: m.id, amount: Math.round(val * 100) / 100 });
+        allocatedTotal += val;
+      }
+    });
+
+    allocatedTotal = Math.round(allocatedTotal * 100) / 100;
+    const diff = Math.round((amount - allocatedTotal) * 100) / 100;
+    if (Math.abs(diff) > 0.05) {
+      const autoAdjust = confirm(
+        `Total amount paid (${formatMoney(allocatedTotal)}) does not match expense amount (${formatMoney(amount)}).\nDifference: ${formatMoney(diff)}.\n\nAdjust difference automatically?`
+      );
+      if (autoAdjust) {
+        autoFillPayerRemaining();
+        payers.length = 0;
+        members.forEach((m) => {
+          const inp = document.getElementById(`multi-payer-${m.id}`);
+          const val = parseFloat(inp ? inp.value : 0) || 0;
+          if (val > 0.001) {
+            payers.push({ memberId: m.id, amount: Math.round(val * 100) / 100 });
+          }
+        });
+      } else {
+        return;
+      }
+    }
+    if (payers.length === 0) {
+      showToast('Please allocate the amount paid to at least one person');
+      return;
+    }
+    paidBy = JSON.stringify(payers);
+  } else {
+    paidBy = el.expPaidBy.value;
+  }
 
   if (!description) {
     showToast('Please enter an expense description');
@@ -2517,6 +2764,11 @@ function selectChatConversation(convId, convType, title, shouldRerenderChips = t
     }
   }
 
+  const clearBtn = document.getElementById('btn-chat-clear-messages');
+  if (clearBtn) {
+    clearBtn.style.display = 'inline-flex';
+  }
+
   document.querySelectorAll('#chat-conversation-chips .chat-conv-chip').forEach((chip) => {
     if (chip.getAttribute('data-conv-id') === convId) {
       chip.classList.add('active');
@@ -2582,6 +2834,30 @@ function renderMessages(messages, containerId = 'main-chat-messages') {
 
   container.scrollTop = container.scrollHeight;
 }
+
+// Local Clear Chat Handler
+async function confirmClearChat(convId) {
+  const targetId = convId || state.activeChatConversationId || state.activeGroupId;
+  if (!targetId) return;
+
+  const confirmed = confirm("Clear chat history for this device only?\n\nThis will remove messages from your device only. Messages will not be deleted for other members or peers.");
+  if (!confirmed) return;
+
+  await fetchApi(`/api/groups/${targetId}/messages/clear`, {
+    method: 'POST'
+  });
+
+  showToast('Chat cleared locally');
+  await loadMessages(targetId);
+}
+window.confirmClearChat = confirmClearChat;
+
+window.handleClearCurrentChat = function() {
+  const targetId = (state.activeView === 'view-chat') 
+    ? state.activeChatConversationId 
+    : state.activeGroupId;
+  confirmClearChat(targetId);
+};
 
 // Dedicated Main Chat Send
 safeOn(document.getElementById('form-main-chat-send'), 'submit', async (e) => {

@@ -124,4 +124,11 @@ db.exec(`
   );
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS chat_clear_state (
+    group_id TEXT PRIMARY KEY,
+    cleared_at TEXT NOT NULL
+  );
+`);
+
 module.exports = { db, DB_PATH };
